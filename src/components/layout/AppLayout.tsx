@@ -34,7 +34,7 @@ const mainNavItems = [
   { href: "/train", label: "Train Model", icon: PlayCircle },
   { href: "/my-zpe-ai-models", label: "My ZPE-AI Models", icon: ListChecks },
   { href: "/performance", label: "Performance Analysis", icon: TrendingUp },
-  { href: "/architecture", label: "Architecture", icon: Cpu },
+  // { href: "/architecture", label: "Architecture", icon: Cpu }, // Removed
   { href: "/gpu-monitor", label: "GPU Monitor", icon: Monitor },
 ];
 
@@ -80,6 +80,7 @@ const NavLinkWrapper = ({
   pathname: string;
   onClick: () => void;
 }) => {
+  const Icon = item.icon;
   const isActive =
     (pathname === item.href ||
       (pathname.startsWith(item.href + "/") &&
@@ -99,7 +100,7 @@ const NavLinkWrapper = ({
         onClick={onClick}
       >
         <Link href={item.href}>
-          <item.icon className="h-5 w-5" />
+          <Icon className="h-5 w-5" />
           <span className="group-data-[state=collapsed]:hidden">{item.label}</span>
         </Link>
       </SidebarMenuButton>
@@ -229,14 +230,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col flex-1 w-full"> 
           <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-card px-4 md:px-6">
              <SidebarTrigger
-                variant="outline" // Customize the trigger appearance
+                variant="outline" 
                 size="icon"
-                className="shrink-0 md:hidden" // Only show on mobile
+                className="shrink-0 md:hidden"
              />
              <SidebarTrigger
-                variant="ghost" // Customize the trigger appearance
+                variant="ghost" 
                 size="icon"
-                className="hidden shrink-0 md:inline-flex" // Only show on desktop
+                className="hidden shrink-0 md:inline-flex" 
              />
 
             <div className="flex-1 md:hidden"> 
