@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
+const NONE_OPTION_VALUE = "none-option";
 
 interface ParsedEpochMetric {
   epoch: number;
@@ -104,8 +105,11 @@ export default function PerformancePage() {
   };
 
   const handleSelectComparisonJob = (jobId: string) => {
-    if (jobId) fetchJobDetails(jobId, true);
-    else setComparisonJob(null);
+    if (jobId === NONE_OPTION_VALUE) {
+      setComparisonJob(null);
+    } else if (jobId) {
+      fetchJobDetails(jobId, true);
+    }
   };
 
   const parseLogMessages = (logs: string[]): ParsedEpochMetric[] => {
@@ -332,12 +336,12 @@ export default function PerformancePage() {
                 {jobsList.map(job => <SelectItem key={job.job_id} value={job.job_id}>{job.model_name} ({job.job_id.slice(-6)})</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select onValueChange={handleSelectComparisonJob} value={comparisonJob?.job_id || ""}>
+            <Select onValueChange={handleSelectComparisonJob} value={comparisonJob?.job_id || NONE_OPTION_VALUE}>
               <SelectTrigger className="w-[280px]" disabled={isLoadingComparisonJob}>
                 <SelectValue placeholder={isLoadingComparisonJob ? "Loading..." : "Select Comparison Job (Optional)"} />
               </SelectTrigger>
               <SelectContent>
-                 <SelectItem value="">None</SelectItem>
+                 <SelectItem value={NONE_OPTION_VALUE}>None</SelectItem>
                 {jobsList.filter(j => j.job_id !== activeJob?.job_id).map(job => <SelectItem key={job.job_id} value={job.job_id}>{job.model_name} ({job.job_id.slice(-6)})</SelectItem>)}
               </SelectContent>
             </Select>
@@ -674,3 +678,4 @@ export default function PerformancePage() {
     </div>
   );
 }
+
