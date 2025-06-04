@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   PanelLeft, Home, Cpu, Zap, Atom, BarChart3, Settings, PlayCircle, Lightbulb, 
   Replace, Cog, Scaling, Box, Share2, Wrench, Moon, Sun, BrainCircuit, Globe, 
-  ScatterChart, IterationCw, Database, MessageSquare, Signal, SlidersHorizontal, Monitor, TrendingUp, Wand2, Rocket, ArrowRight, Settings2 // Added Settings2
+  ScatterChart, IterationCw, MessageSquare, Signal, SlidersHorizontal, Monitor, TrendingUp, Wand2, Rocket, ArrowRight, Settings2, ListChecks // Added ListChecks
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -17,8 +17,7 @@ const mainNavItems = [
   { href: "/introduction", label: "Introduction", icon: ArrowRight },
   { href: "/dashboard", label: "Dashboard", icon: Home },
   { href: "/train", label: "Train Model", icon: PlayCircle },
-  { href: "/model-configs", label: "Model Configs", icon: Database },
-  { href: "/configurations", label: "Job History", icon: BarChart3 }, 
+  { href: "/my-zpe-ai-models", label: "My ZPE-AI Models", icon: ListChecks }, // Updated Link
   { href: "/performance", label: "Performance Analysis", icon: TrendingUp },
   { href: "/architecture", label: "Architecture", icon: Cpu },
   { href: "/gpu-monitor", label: "GPU Monitor", icon: Monitor },
@@ -26,7 +25,7 @@ const mainNavItems = [
 
 const advancedToolsNavItems = [
   { href: "/zpe-flow-analysis", label: "ZPE Flow Analysis", icon: SlidersHorizontal },
-  { href: "/zpe-flow", label: "HS-QNN Advisor", icon: BrainCircuit }, // Renamed for clarity, maps to /zpe-flow
+  { href: "/zpe-flow", label: "HS-QNN Advisor", icon: BrainCircuit }, 
   { href: "/quantum-noise", label: "Quantum Noise", icon: Atom },
   { href: "/rf-generator", label: "RF Generator", icon: Signal },
   { href: "/ai-analysis", label: "AI Assistant", icon: MessageSquare },
@@ -169,3 +168,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+    
+      
