@@ -15,11 +15,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/hooks/use-toast";
-import { Play, StopCircle, List, Zap, Settings, RefreshCw, AlertTriangle, CheckCircle, ExternalLink, SlidersHorizontal, Atom, Brain } from "lucide-react";
+import { Play, StopCircle, List, Zap, Settings, RefreshCw, AlertTriangle, CheckCircle, ExternalLink, SlidersHorizontal, Atom, Brain, Waves } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { useRouter, useSearchParams } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
@@ -563,7 +564,7 @@ export default function TrainModelPage() {
                   <TableBody>
                     {jobsList.map(job => (
                       <TableRow key={job.job_id} className={cn("cursor-pointer hover:bg-muted/50", activeJob?.job_id === job.job_id ? "bg-primary/10" : "")} onClick={() => handleViewJobDetails(job.job_id)}>
-                        <TableCell className="font-mono text-xs">{job.job_id.replace('zpe_job_', '')}</TableCell>
+                        <TableCell className="font-mono text-xs">{job.job_id.replace('zpe_job_','')}</TableCell>
                         <TableCell className="font-medium">{job.model_name}</TableCell>
                         <TableCell>
                           <Badge variant={
@@ -681,4 +682,5 @@ const MetricDisplay = ({ label, value }: { label: string; value: string | number
     <p className="font-semibold text-lg font-mono">{value}</p>
   </div>
 );
+
 
