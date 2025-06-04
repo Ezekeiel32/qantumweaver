@@ -1,7 +1,6 @@
-import type {NextConfig} from 'next';
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  /* config options here */
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -17,6 +16,18 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
     ],
+  },
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // Helps with some packages that might try to use Node.js modules on client
+      config.resolve.fallback = {
+        ...config.resolve.fallback, 
+        fs: false,
+        path: false,
+        process: false, // Example, if some lib needs process.env on client
+      };
+    }
+    return config;
   },
 };
 
