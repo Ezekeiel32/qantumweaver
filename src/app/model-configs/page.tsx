@@ -2,9 +2,9 @@
 "use client";
 import React, { useState, useEffect, useCallback } from "react";
 import type { ModelConfig } from "@/types/entities";
-import type { TrainingParameters as FullTrainingParameters } from "@/types/training"; // For defaults
+import type { TrainingParameters as FullTrainingParameters } from "@/types/training";
 import {
-  Settings, Plus, Trash, Copy, Eye, EyeOff, SlidersHorizontal, ChevronDown, CheckCircle, XCircle, Zap, Atom, Layers
+  Settings, Plus, Trash, Copy, Eye, EyeOff, SlidersHorizontal, ChevronDown, CheckCircle, XCircle, Zap, Atom, Layers, RefreshCw
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,18 +26,12 @@ import { toast } from "@/hooks/use-toast";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
-// Define a type for the parameters that will be nested, matching FullTrainingParameters
-interface LocalTrainingParameters extends FullTrainingParameters {}
-
-
-// Default ZPE Params to use if parts are missing from backend response
 const defaultZPEParamsArrays = {
   momentumParams: [0.9, 0.85, 0.8, 0.75, 0.7, 0.65],
   strengthParams: [0.35, 0.33, 0.31, 0.6, 0.27, 0.5],
   noiseParams: [0.3, 0.28, 0.26, 0.35, 0.22, 0.25],
   couplingParams: [0.85, 0.82, 0.79, 0.76, 0.73, 0.7],
 };
-
 
 export default function ModelConfigurationsPage() {
   const [configs, setConfigs] = useState<ModelConfig[]>([]); 
@@ -48,7 +42,7 @@ export default function ModelConfigurationsPage() {
   const [showDeletePrompt, setShowDeletePrompt] = useState(false);
   const [shownParameters, setShownParameters] = useState<Record<string, boolean>>({});
 
-  const initialNewConfigParameters: LocalTrainingParameters = {
+  const initialNewConfigParameters: FullTrainingParameters = {
     totalEpochs: 30,
     batchSize: 32,
     learningRate: 0.001,
@@ -66,12 +60,12 @@ export default function ModelConfigurationsPage() {
   
   const initialNewConfig: ModelConfig = {
     name: "",
-    channel_sizes: [64, 128, 256, 512],
     parameters: initialNewConfigParameters,
-    accuracy: 0, // Default to 0 for new configs
-    loss: 0, // Default to 0 for new configs
-    use_quantum_noise: true, // Aligns with parameters.quantumMode
-    date_created: new Date().toISOString().split('T')[0]
+    accuracy: 0, 
+    loss: 0, 
+    use_quantum_noise: true, 
+    date_created: new Date().toISOString().split('T')[0],
+    channel_sizes: [64, 128, 256, 512],
   };
   const [newConfig, setNewConfig] = useState<ModelConfig>(initialNewConfig); 
 
@@ -86,17 +80,16 @@ export default function ModelConfigurationsPage() {
       const fetchedConfigs: any[] = data.configs || [];
 
       const mappedConfigs: ModelConfig[] = fetchedConfigs.map(apiConfig => {
-        // Ensure parameters object has all fields expected by FullTrainingParameters
         const paramsFromApi = apiConfig.parameters || {};
         const fullParams: FullTrainingParameters = {
           totalEpochs: paramsFromApi.totalEpochs ?? initialNewConfigParameters.totalEpochs,
           batchSize: paramsFromApi.batchSize ?? initialNewConfigParameters.batchSize,
           learningRate: paramsFromApi.learningRate ?? initialNewConfigParameters.learningRate,
           weightDecay: paramsFromApi.weightDecay ?? initialNewConfigParameters.weightDecay,
-          momentumParams: paramsFromApi.momentumParams ?? [...defaultZPEParamsArrays.momentumParams],
-          strengthParams: paramsFromApi.strengthParams ?? [...defaultZPEParamsArrays.strengthParams],
-          noiseParams: paramsFromApi.noiseParams ?? [...defaultZPEParamsArrays.noiseParams],
-          couplingParams: paramsFromApi.couplingParams ?? [...defaultZPEParamsArrays.couplingParams], // Default if missing
+          momentumParams: paramsFromApi.momentumParams || [...defaultZPEParamsArrays.momentumParams],
+          strengthParams: paramsFromApi.strengthParams || [...defaultZPEParamsArrays.strengthParams],
+          noiseParams: paramsFromApi.noiseParams || [...defaultZPEParamsArrays.noiseParams],
+          couplingParams: paramsFromApi.couplingParams || [...defaultZPEParamsArrays.couplingParams],
           quantumCircuitSize: paramsFromApi.quantumCircuitSize ?? initialNewConfigParameters.quantumCircuitSize,
           labelSmoothing: paramsFromApi.labelSmoothing ?? initialNewConfigParameters.labelSmoothing,
           quantumMode: paramsFromApi.quantumMode ?? initialNewConfigParameters.quantumMode,
@@ -112,20 +105,23 @@ export default function ModelConfigurationsPage() {
           accuracy: apiConfig.accuracy || 0,
           loss: apiConfig.loss || 0,
           use_quantum_noise: apiConfig.use_quantum_noise ?? fullParams.quantumMode,
-          channel_sizes: apiConfig.channel_sizes || [], // Default if missing
+          channel_sizes: apiConfig.channel_sizes || [], 
         };
       });
 
       setConfigs(mappedConfigs.sort((a,b) => new Date(b.date_created).getTime() - new Date(a.date_created).getTime()));
+      
       if (mappedConfigs.length > 0) {
-        if (!selectedConfig || !mappedConfigs.find(c => c.id === selectedConfig.id)) {
+        if (!selectedConfig || !mappedConfigs.some(c => c.id === selectedConfig.id)) {
             setSelectedConfig(mappedConfigs[0]);
         }
-        const initialShown: Record<string, boolean> = {};
+        const currentShownParameters = { ...shownParameters };
         mappedConfigs.forEach(config => {
-          if(config.id) initialShown[config.id] = false;
+          if(config.id && currentShownParameters[config.id!] === undefined) {
+            currentShownParameters[config.id!] = false; 
+          }
         });
-        setShownParameters(prev => ({...prev, ...initialShown}));
+        setShownParameters(currentShownParameters);
       } else {
         setSelectedConfig(null);
       }
@@ -134,7 +130,7 @@ export default function ModelConfigurationsPage() {
       toast({ title: "Error", description: "Failed to fetch configurations: " + error.message, variant: "destructive"});
     }
     setIsLoading(false);
-  }, [selectedConfig]); // Add selectedConfig to dependencies
+  }, [initialNewConfigParameters, shownParameters, selectedConfig]); // Ensure shownParameters and selectedConfig are deps if used for preserving state
 
   useEffect(() => {
     fetchData();
@@ -154,56 +150,31 @@ export default function ModelConfigurationsPage() {
         name: newConfig.name || `ZPE-Config-${Date.now().toString().slice(-4)}`,
         parameters: {
           ...newConfig.parameters,
-          // Ensure backend TrainingParameters shape is met (e.g. no couplingParams if backend doesn't handle it)
-          // For now, assume newConfig.parameters is already compliant or backend handles extra fields gracefully.
-          // However, the API POST /configs expects Pydantic ModelConfig, which has TrainingParameters
-          // and that Pydantic TrainingParameters does *not* include couplingParams.
         },
-         use_quantum_noise: newConfig.parameters.quantumMode, // Align this
+         use_quantum_noise: newConfig.parameters.quantumMode,
       };
       
-      // Explicitly create the object that matches the backend's Pydantic TrainingParameters
-      const backendCompatibleParameters = {
-        totalEpochs: configPayload.parameters.totalEpochs,
-        batchSize: configPayload.parameters.batchSize,
-        learningRate: configPayload.parameters.learningRate,
-        weightDecay: configPayload.parameters.weightDecay,
-        momentumParams: configPayload.parameters.momentumParams,
-        strengthParams: configPayload.parameters.strengthParams,
-        noiseParams: configPayload.parameters.noiseParams,
-        // couplingParams is NOT sent
-        quantumCircuitSize: configPayload.parameters.quantumCircuitSize,
-        labelSmoothing: configPayload.parameters.labelSmoothing,
-        quantumMode: configPayload.parameters.quantumMode,
-        modelName: configPayload.parameters.modelName,
-        baseConfigId: configPayload.parameters.baseConfigId,
-      };
+      const { couplingParams, ...backendCompatibleParams } = configPayload.parameters;
 
       const finalPayloadForApi = {
           ...configPayload,
-          parameters: backendCompatibleParameters,
+          parameters: backendCompatibleParams,
       };
-
 
       const response = await fetch(`${API_BASE_URL}/configs`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(finalPayloadForApi),
       });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(`HTTP error! status: ${response.status}. ${errorData.detail || JSON.stringify(errorData)}`);
       }
-      const createdConfigData = await response.json();
-      // The response from /api/configs POST is {"status": "configuration_saved", "config_id": config_id}
-      // We need to reconstruct the full config or re-fetch. For simplicity, re-fetch.
-      await fetchData(); // Re-fetch to get the newly created config with all details
+      await fetchData(); 
       
       setNewConfig(initialNewConfig); 
       setIsCreating(false);
-      toast({ title: "Success", description: `Configuration "${configPayload.name}" (ID: ${createdConfigData.config_id.slice(-6)}) created.`});
+      toast({ title: "Success", description: `Configuration "${configPayload.name}" created.`});
     } catch (error: any) { 
       console.error("Error creating configuration:", error);
       toast({ title: "Error", description: `Failed to create configuration. ${error.message || ''}`, variant: "destructive"});
@@ -214,35 +185,21 @@ export default function ModelConfigurationsPage() {
   const handleCloneConfig = async (configToClone: ModelConfig) => { 
     try {
       const clonedParameters: FullTrainingParameters = {
-        ...configToClone.parameters, // Clone all parameters
+        ...configToClone.parameters,
       };
       const clonedConfig: ModelConfig = {
         ...configToClone,
-        id: undefined, // Remove ID for new creation
+        id: undefined, 
         name: `${configToClone.name}-Clone-${Date.now().toString().slice(-4)}`,
         date_created: new Date().toISOString().split('T')[0],
         parameters: clonedParameters,
       };
       
-       // Backend compatible parameters
-      const backendCompatibleParametersForClone = {
-        totalEpochs: clonedConfig.parameters.totalEpochs,
-        batchSize: clonedConfig.parameters.batchSize,
-        learningRate: clonedConfig.parameters.learningRate,
-        weightDecay: clonedConfig.parameters.weightDecay,
-        momentumParams: clonedConfig.parameters.momentumParams,
-        strengthParams: clonedConfig.parameters.strengthParams,
-        noiseParams: clonedConfig.parameters.noiseParams,
-        quantumCircuitSize: clonedConfig.parameters.quantumCircuitSize,
-        labelSmoothing: clonedConfig.parameters.labelSmoothing,
-        quantumMode: clonedConfig.parameters.quantumMode,
-        modelName: clonedConfig.parameters.modelName, // Use the modelName from parameters
-        baseConfigId: clonedConfig.parameters.baseConfigId,
-      };
+      const { couplingParams, ...backendCompatibleParamsForClone } = clonedConfig.parameters;
 
       const finalPayloadForClone = {
           ...clonedConfig,
-          parameters: backendCompatibleParametersForClone,
+          parameters: backendCompatibleParamsForClone,
       };
 
       const response = await fetch(`${API_BASE_URL}/configs`, {
@@ -255,7 +212,7 @@ export default function ModelConfigurationsPage() {
         const errorData = await response.json();
         throw new Error(`Failed to clone: ${errorData.detail || response.statusText}`);
       }
-      await fetchData(); // Re-fetch
+      await fetchData(); 
       toast({ title: "Success", description: `Configuration "${clonedConfig.name}" cloned.`});
     } catch (error: any) { 
       console.error("Error cloning configuration:", error);
@@ -265,17 +222,33 @@ export default function ModelConfigurationsPage() {
 
   const confirmDeleteConfig = async () => {
     if (!selectedConfig || !selectedConfig.id) return;
-    // Placeholder for actual API call to DELETE /api/configs/{config_id}
-    // For now, just remove from local state
-    console.log(`Simulating delete for config ID: ${selectedConfig.id}`);
-    setConfigs(prev => prev.filter(config => config.id !== selectedConfig.id));
-    setSelectedConfig(configs.length > 1 ? configs.find(c => c.id !== selectedConfig!.id) || null : null);
-    setShowDeletePrompt(false);
-    toast({ title: "Success", description: `Configuration "${selectedConfig.name}" (simulated) deleted.`});
-    // After actual API call: await fetchData(); 
+    const configNameToDelete = selectedConfig.name;
+    const currentSelectedId = selectedConfig.id;
+
+    try {
+      // Simulating API call for now
+      // const response = await fetch(`${API_BASE_URL}/configs/${selectedConfig.id}`, { method: 'DELETE' });
+      // if (!response.ok) throw new Error("Failed to delete configuration from backend.");
+      console.log(`Simulating delete for config ID: ${currentSelectedId}`);
+
+      setConfigs(prevConfigs => {
+        const newConfigs = prevConfigs.filter(config => config.id !== currentSelectedId);
+        if (selectedConfig?.id === currentSelectedId) {
+            setSelectedConfig(newConfigs.length > 0 ? newConfigs[0] : null);
+        }
+        return newConfigs;
+      });
+      toast({ title: "Success", description: `Configuration "${configNameToDelete}" (simulated) deleted.`});
+    } catch (error: any) { 
+      console.error("Error deleting configuration:", error);
+      toast({ title: "Error", description: `Failed to delete configuration. ${error.message || ''}`, variant: "destructive"});
+    } finally {
+      setShowDeletePrompt(false);
+    }
   };
 
-  const updateNewConfigParam = (paramType: keyof LocalTrainingParameters, index: number, value: number) => {
+
+  const updateNewConfigParam = (paramType: keyof FullTrainingParameters, index: number, value: number) => {
     setNewConfig(prev => {
       const currentParams = prev.parameters;
       const paramArray = currentParams[paramType] as number[] | undefined;
@@ -303,7 +276,7 @@ export default function ModelConfigurationsPage() {
          ...prev.parameters,
          quantumMode: checked,
        },
-       use_quantum_noise: checked // Also update top-level use_quantum_noise
+       use_quantum_noise: checked 
      }));
    };
 
@@ -403,7 +376,7 @@ export default function ModelConfigurationsPage() {
                        </div>
                     </TabsContent>
                     <TabsContent value="zpe" className="space-y-3 pt-3">
-                      {(["momentumParams", "strengthParams", "noiseParams", "couplingParams"] as (keyof LocalTrainingParameters)[]).map((param) => (
+                      {(["momentumParams", "strengthParams", "noiseParams", "couplingParams"] as (keyof FullTrainingParameters)[]).map((param) => (
                         (param !== "couplingParams" && param !== "momentumParams" && param !== "strengthParams" && param !== "noiseParams") ? null : 
                         <div key={param as string} className="space-y-3">
                           <h4 className="text-sm font-medium capitalize">{param.replace('Params', '')} Params</h4>
@@ -466,7 +439,7 @@ export default function ModelConfigurationsPage() {
                             { key: 'noiseParams', name: 'ZPE Noise' },
                             { key: 'couplingParams', name: 'ZPE Coupling' },
                           ].map(paramInfo => {
-                             const values = selectedConfig.parameters[paramInfo.key as keyof LocalTrainingParameters] as number[] | undefined;
+                             const values = selectedConfig.parameters[paramInfo.key as keyof FullTrainingParameters] as number[] | undefined;
                              if (!values || !Array.isArray(values)) return null;
                              return (
                                <TableRow key={paramInfo.key}>
@@ -494,7 +467,7 @@ export default function ModelConfigurationsPage() {
                   <CardContent className="pt-0">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div><h3 className="text-sm font-medium mb-4 text-muted-foreground">Values by Layer</h3><div className="space-y-6">
-                        {(["momentumParams", "strengthParams", "noiseParams", "couplingParams"] as (keyof LocalTrainingParameters)[]).map((paramKey) => {
+                        {(["momentumParams", "strengthParams", "noiseParams", "couplingParams"] as (keyof FullTrainingParameters)[]).map((paramKey) => {
                              if (paramKey === "couplingParams" && !(selectedConfig.parameters.couplingParams && selectedConfig.parameters.couplingParams.length > 0) ) return null; 
                              const paramName = paramKey.replace('Params', '');
                              const values = selectedConfig.parameters[paramKey] as number[] | undefined;
