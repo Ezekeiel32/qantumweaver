@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -7,7 +8,7 @@ import { PanelLeft } from "lucide-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
+import { Button, type ButtonProps } from "@/components/ui/button" // Import ButtonProps
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent } from "@/components/ui/sheet"
@@ -260,30 +261,31 @@ const Sidebar = React.forwardRef<
 Sidebar.displayName = "Sidebar"
 
 const SidebarTrigger = React.forwardRef<
-  React.ElementRef<typeof Button>,
-  React.ComponentProps<typeof Button>
->(({ className, onClick, ...props }, ref) => {
-  const { toggleSidebar } = useSidebar()
+  HTMLButtonElement, // Changed from React.ElementRef<typeof Button>
+  Omit<ButtonProps, "asChild" | "children"> // Uses ButtonProps, but omits asChild and children
+>(({ className, onClick, variant = "ghost", size = "icon", ...props }, ref) => {
+  const { toggleSidebar } = useSidebar();
 
   return (
-    <Button
+    <Button // Renders the actual Button component
       ref={ref}
       data-sidebar="trigger"
-      variant="ghost"
-      size="icon"
-      className={cn("h-7 w-7", className)}
+      variant={variant}
+      size={size}
+      className={cn("h-7 w-7", className)} // Base styling, can be overridden
       onClick={(event) => {
-        onClick?.(event)
-        toggleSidebar()
+        onClick?.(event);
+        toggleSidebar();
       }}
-      {...props}
+      {...props} // Spreads other valid ButtonProps (e.g., aria-label)
     >
-      <PanelLeft />
-      <span className="sr-only">Toggle Sidebar</span>
+      <PanelLeft className="h-5 w-5" /> {/* Always renders this icon */}
+      <span className="sr-only">Toggle Sidebar</span> {/* And this screen-reader text */}
     </Button>
-  )
-})
-SidebarTrigger.displayName = "SidebarTrigger"
+  );
+});
+SidebarTrigger.displayName = "SidebarTrigger";
+
 
 const SidebarRail = React.forwardRef<
   HTMLButtonElement,
@@ -556,7 +558,7 @@ const SidebarMenuButton = React.forwardRef<
     const Comp = asChild ? Slot : "button"
     const { isMobile, state } = useSidebar()
 
-    const button = (
+    const buttonElement = ( 
       <Comp
         ref={ref}
         data-sidebar="menu-button"
@@ -568,23 +570,21 @@ const SidebarMenuButton = React.forwardRef<
     )
 
     if (!tooltip) {
-      return button
+      return buttonElement
     }
 
-    if (typeof tooltip === "string") {
-      tooltip = {
-        children: tooltip,
-      }
-    }
+    const tooltipProps = typeof tooltip === "string" ? { children: tooltip } : tooltip;
 
     return (
       <Tooltip>
-        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipTrigger> 
+          {buttonElement}
+        </TooltipTrigger>
         <TooltipContent
           side="right"
           align="center"
           hidden={state !== "collapsed" || isMobile}
-          {...tooltip}
+          {...tooltipProps}
         />
       </Tooltip>
     )

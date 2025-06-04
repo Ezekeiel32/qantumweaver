@@ -16,7 +16,7 @@ import {
   SidebarProvider,
   Sidebar,
   SidebarHeader,
-  SidebarContent, // Corrected import name
+  SidebarContent,
   SidebarFooter,
   SidebarTrigger,
   SidebarInset,
@@ -25,7 +25,7 @@ import {
   SidebarMenuButton,
   SidebarGroup,
   SidebarGroupLabel,
-  useSidebar,
+  useSidebar, 
 } from "@/components/ui/sidebar";
 
 const mainNavItems = [
@@ -99,10 +99,8 @@ const NavLinkWrapper = ({
         onClick={onClick}
       >
         <Link href={item.href}>
-          <span className="flex items-center gap-2">
-            <item.icon className="h-5 w-5" />
-            <span className="group-data-[state=collapsed]:hidden">{item.label}</span>
-          </span>
+          <item.icon className="h-5 w-5" />
+          <span className="group-data-[state=collapsed]:hidden">{item.label}</span>
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -165,7 +163,7 @@ const AppSidebarContent = () => {
           <span className="group-data-[state=collapsed]:hidden">Quantum Weaver</span>
         </Link>
       </SidebarHeader>
-      <SidebarContent className="flex-1 overflow-y-auto p-0"> {/* Corrected usage */}
+      <SidebarContent className="flex-1 overflow-y-auto p-0">
         <ScrollArea className="h-full px-2 py-0">
           {renderNavSection("Main", mainNavItems)}
           {renderNavSection("Advanced Tools", advancedToolsNavItems)}
@@ -190,8 +188,7 @@ const AppSidebarContent = () => {
 };
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { isMobile, setOpenMobile } = useSidebar(); // Get from context now
-  const [isDarkMode, setIsDarkMode] = useState(true); // Independent theme state for header toggle
+  const [isDarkMode, setIsDarkMode] = useState(true);
 
   useEffect(() => {
     const storedTheme = localStorage.getItem("theme");
@@ -218,51 +215,53 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
 
   return (
-    // SidebarProvider is now at the root of this component's return
-    // We don't need to wrap it again here if this AppLayout is always under a SidebarProvider
-    // However, if AppLayout IS the provider, then it's correct.
-    // Assuming AppLayout IS the provider based on previous setup.
-    <div className="flex min-h-screen w-full bg-background">
-      <Sidebar
-        side="left"
-        collapsible="offcanvas" 
-        variant="sidebar" 
-        className="bg-sidebar text-sidebar-foreground" 
-      >
-        <AppSidebarContent />
-      </Sidebar>
+    <SidebarProvider>
+      <div className="flex min-h-screen w-full bg-background">
+        <Sidebar
+          side="left"
+          collapsible="offcanvas" 
+          variant="sidebar" 
+          className="bg-sidebar text-sidebar-foreground" 
+        >
+          <AppSidebarContent />
+        </Sidebar>
 
-      <div className="flex flex-col flex-1 w-full"> 
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-card px-4 md:px-6">
-          {/* SidebarTrigger for mobile is implicitly handled by Sidebar component when collapsible="offcanvas" */}
-          {/* The custom SidebarTrigger here might be redundant if the default one from ui/sidebar is preferred */}
-          {/* Let's use the SidebarTrigger from ui/sidebar, which gets its toggle function from context */}
-           <SidebarTrigger className="" />
+        <div className="flex flex-col flex-1 w-full"> 
+          <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-card px-4 md:px-6">
+             <SidebarTrigger
+                variant="outline" // Customize the trigger appearance
+                size="icon"
+                className="shrink-0 md:hidden" // Only show on mobile
+             />
+             <SidebarTrigger
+                variant="ghost" // Customize the trigger appearance
+                size="icon"
+                className="hidden shrink-0 md:inline-flex" // Only show on desktop
+             />
 
-          <div className="flex-1 md:hidden"> 
-            <Link href="/dashboard" className="flex items-center gap-2 text-lg font-semibold text-primary">
-              <Zap className="h-6 w-6" />
-              <span className="sr-only">Quantum Weaver</span>
-            </Link>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-             {/* Mobile theme toggle could be here if needed, but it's in the sidebar now for consistency */}
-             {/* Adding a theme toggle for header on larger screens for convenience */}
-             <Button variant="ghost" size="icon" onClick={toggleDarkModeGlobal} className="hidden md:inline-flex">
-                {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-                <span className="sr-only">Toggle theme</span>
-            </Button>
-            {/* Theme toggle for very small screens if sidebar is completely hidden */}
-             <Button variant="ghost" size="icon" onClick={toggleDarkModeGlobal} className="md:hidden">
-                {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-                <span className="sr-only">Toggle theme</span>
-            </Button>
-          </div>
-        </header>
-        <SidebarInset> 
-          {children}
-        </SidebarInset>
+            <div className="flex-1 md:hidden"> 
+              <Link href="/dashboard" className="flex items-center gap-2 text-lg font-semibold text-primary">
+                <Zap className="h-6 w-6" />
+                <span className="sr-only">Quantum Weaver</span>
+              </Link>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+               <Button variant="ghost" size="icon" onClick={toggleDarkModeGlobal} className="hidden md:inline-flex">
+                  {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                  <span className="sr-only">Toggle theme</span>
+              </Button>
+               <Button variant="ghost" size="icon" onClick={toggleDarkModeGlobal} className="md:hidden">
+                  {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                  <span className="sr-only">Toggle theme</span>
+              </Button>
+            </div>
+          </header>
+          <SidebarInset> 
+            {children}
+          </SidebarInset>
+        </div>
       </div>
-    </div>
+      <Toaster />
+    </SidebarProvider>
   );
 }
