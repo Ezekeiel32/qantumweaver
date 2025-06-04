@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { Zap, Atom, Brain } from 'lucide-react';
+import { Zap, Atom, Brain, CircuitBoard } from 'lucide-react';
 import Link from "next/link";
 
 const IntroductionPage: React.FC = () => {
@@ -56,12 +56,21 @@ const IntroductionPage: React.FC = () => {
               </p>
           </div>
 
+          <Button 
+            size="lg" 
+            className="mt-8 mb-4 px-10 py-6 text-lg font-semibold rounded-lg shadow-lg transform hover:scale-105 transition-transform duration-300 bg-purple-600 hover:bg-purple-700 text-white" 
+            asChild
+          >
+            <Link href="/architecture">
+              <CircuitBoard className="mr-2 h-5 w-5" /> Explore ZPE-QNN Model Architecture
+            </Link>
+          </Button>
 
-          <p className="text-2xl md:text-3xl font-headline font-bold mt-12 text-primary animate-fade-in-up">
+          <p className="text-2xl md:text-3xl font-headline font-bold mt-8 text-primary animate-fade-in-up">
             Witness AI learning and adapting with quantum-inspired elegance!
           </p>
 
-          <Button size="lg" className="mt-12 px-10 py-6 text-xl font-semibold rounded-lg shadow-lg transform hover:scale-105 transition-transform duration-300 bg-primary hover:bg-primary/90" asChild>
+          <Button size="lg" className="mt-8 px-10 py-6 text-xl font-semibold rounded-lg shadow-lg transform hover:scale-105 transition-transform duration-300 bg-primary hover:bg-primary/90" asChild>
             <Link href="/dashboard">Explore the Platform</Link>
           </Button>
         </section>
@@ -93,3 +102,5 @@ const IntroductionPage: React.FC = () => {
 };
 
 export default IntroductionPage;
+
+    
