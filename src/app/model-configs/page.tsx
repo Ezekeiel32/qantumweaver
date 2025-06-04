@@ -59,7 +59,7 @@ export default function ModelConfigurationsPage() {
 
   const initialNewConfig: ModelConfig = {
     name: "",
-    parameters: { ...initialNewConfigParameters }, // Deep copy default parameters
+    parameters: { ...initialNewConfigParameters }, 
     accuracy: 0, 
     loss: 0, 
     use_quantum_noise: initialNewConfigParameters.quantumMode, 
@@ -80,15 +80,16 @@ export default function ModelConfigurationsPage() {
 
       const mappedConfigs: ModelConfig[] = fetchedConfigs.map(apiConfig => {
         const paramsFromApi = apiConfig.parameters || {};
+        
         const fullParams: FullTrainingParameters = {
           totalEpochs: paramsFromApi.totalEpochs || initialNewConfigParameters.totalEpochs,
           batchSize: paramsFromApi.batchSize || initialNewConfigParameters.batchSize,
           learningRate: paramsFromApi.learningRate || initialNewConfigParameters.learningRate,
-          weightDecay: paramsFromApi.weightDecay || initialNewConfigParameters.weightDecay,
+          weightDecay: paramsFromApi.weightDecay || initialConfigParameters.weightDecay,
           momentumParams: paramsFromApi.momentumParams || [...defaultZPEParamsArrays.momentumParams],
           strengthParams: paramsFromApi.strengthParams || [...defaultZPEParamsArrays.strengthParams],
           noiseParams: paramsFromApi.noiseParams || [...defaultZPEParamsArrays.noiseParams],
-          couplingParams: paramsFromApi.couplingParams || [...defaultZPEParamsArrays.couplingParams],
+          couplingParams: paramsFromApi.couplingParams || [...defaultZPEParamsArrays.couplingParams], // Default if not in backend
           quantumCircuitSize: paramsFromApi.quantumCircuitSize || initialNewConfigParameters.quantumCircuitSize,
           labelSmoothing: paramsFromApi.labelSmoothing || initialNewConfigParameters.labelSmoothing,
           quantumMode: paramsFromApi.quantumMode === undefined ? initialNewConfigParameters.quantumMode : paramsFromApi.quantumMode,
@@ -115,22 +116,24 @@ export default function ModelConfigurationsPage() {
         if (!selectedConfig || !sortedConfigs.some(c => c.id === selectedConfig.id)) {
             setSelectedConfig(sortedConfigs[0]);
         }
-        const currentShownParameters = { ...shownParameters };
-        sortedConfigs.forEach(config => {
-          if(config.id && currentShownParameters[config.id!] === undefined) {
-            currentShownParameters[config.id!] = false; 
-          }
-        });
-        setShownParameters(currentShownParameters);
       } else {
         setSelectedConfig(null);
       }
+      
+      const currentShownParametersState = { ...shownParameters };
+      sortedConfigs.forEach(config => {
+        if(config.id && currentShownParametersState[config.id!] === undefined) { // Check if id exists and is not already set
+          currentShownParametersState[config.id!] = false; 
+        }
+      });
+      setShownParameters(currentShownParametersState);
+
     } catch (error: any) {
       console.error("Error fetching configurations:", error);
       toast({ title: "Error", description: "Failed to fetch configurations: " + error.message, variant: "destructive"});
     }
     setIsLoading(false);
-  }, [selectedConfig, shownParameters]); // Removed initialNewConfigParameters as it's stable
+  }, [selectedConfig, shownParameters]);
 
   useEffect(() => {
     fetchData();
@@ -154,12 +157,13 @@ export default function ModelConfigurationsPage() {
          use_quantum_noise: newConfig.parameters.quantumMode,
       };
       
-      // Backend expects TrainingParameters without couplingParams, so we create a compatible version
+      // Backend expects TrainingParameters without couplingParams for /api/configs POST
+      // This transformation was already correct.
       const { couplingParams, ...backendCompatibleParams } = configPayload.parameters;
 
       const finalPayloadForApi = {
           ...configPayload,
-          parameters: backendCompatibleParams, // Send this to the backend
+          parameters: backendCompatibleParams, 
       };
 
       const response = await fetch(`${API_BASE_URL}/configs`, {
@@ -172,9 +176,9 @@ export default function ModelConfigurationsPage() {
         const errorData = await response.json();
         throw new Error(`HTTP error! status: ${response.status}. ${errorData.detail || JSON.stringify(errorData)}`);
       }
-      await fetchData(); 
+      await fetchData(); // Refetch to get the latest list including the new one
       
-      setNewConfig(initialNewConfig); 
+      setNewConfig({...initialNewConfig}); // Reset form
       setIsCreating(false);
       toast({ title: "Success", description: `Configuration "${configPayload.name}" created.`});
     } catch (error: any) { 
@@ -187,7 +191,7 @@ export default function ModelConfigurationsPage() {
   const handleCloneConfig = async (configToClone: ModelConfig) => { 
     try {
       const clonedParameters: FullTrainingParameters = {
-        ...configToClone.parameters, // This includes couplingParams if present
+        ...configToClone.parameters, 
       };
       const clonedConfig: ModelConfig = {
         ...configToClone,
@@ -214,7 +218,7 @@ export default function ModelConfigurationsPage() {
         const errorData = await response.json();
         throw new Error(`Failed to clone: ${errorData.detail || response.statusText}`);
       }
-      await fetchData(); 
+      await fetchData(); // Refetch
       toast({ title: "Success", description: `Configuration "${clonedConfig.name}" cloned.`});
     } catch (error: any) { 
       console.error("Error cloning configuration:", error);
@@ -228,11 +232,12 @@ export default function ModelConfigurationsPage() {
     const currentSelectedId = selectedConfig.id;
 
     try {
-      // Simulate API call for now. Replace with actual if backend supports DELETE /api/configs/{id}
-      // const response = await fetch(`${API_BASE_URL}/configs/${selectedConfig.id}`, { method: 'DELETE' });
-      // if (!response.ok) throw new Error("Failed to delete configuration from backend.");
-      console.log(`Simulating delete for config ID: ${currentSelectedId}`);
-
+      const response = await fetch(`${API_BASE_URL}/configs/${selectedConfig.id}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({detail: "Failed to delete, server error."}));
+        throw new Error(`Failed to delete configuration: ${response.status} - ${errorData.detail}`);
+      }
+      
       setConfigs(prevConfigs => {
         const newConfigs = prevConfigs.filter(config => config.id !== currentSelectedId);
         if (selectedConfig?.id === currentSelectedId) {
@@ -240,7 +245,7 @@ export default function ModelConfigurationsPage() {
         }
         return newConfigs;
       });
-      toast({ title: "Success", description: `Configuration "${configNameToDelete}" (simulated) deleted.`});
+      toast({ title: "Success", description: `Configuration "${configNameToDelete}" deleted.`});
     } catch (error: any) { 
       console.error("Error deleting configuration:", error);
       toast({ title: "Error", description: `Failed to delete configuration. ${error.message || ''}`, variant: "destructive"});
@@ -252,7 +257,7 @@ export default function ModelConfigurationsPage() {
 
   const updateNewConfigParam = (paramType: keyof FullTrainingParameters, index: number, value: number) => {
     setNewConfig(prev => {
-      const currentParams = prev.parameters; // Already FullTrainingParameters
+      const currentParams = prev.parameters; 
       const paramArray = currentParams[paramType] as number[] | undefined;
 
       if (Array.isArray(paramArray)) {
@@ -292,7 +297,7 @@ export default function ModelConfigurationsPage() {
 
     const paramsToPrefill: Partial<FullTrainingParameters> = { ...config.parameters };
     paramsToPrefill.modelName = `${config.parameters.modelName}_from_config`;
-    paramsToPrefill.baseConfigId = config.id; // Set baseConfigId to the ID of the loaded config
+    paramsToPrefill.baseConfigId = config.id; 
 
     const queryParams = new URLSearchParams();
     for (const [key, value] of Object.entries(paramsToPrefill)) {
@@ -560,3 +565,5 @@ export default function ModelConfigurationsPage() {
   );
 }
 
+
+    
