@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -17,6 +16,7 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import traceback
 from contextlib import asynccontextmanager
+import psutil  # For CPU usage monitoring
 
 # --- PyNVML Initialization for GPU Monitoring ---
 PYNVML_AVAILABLE = False
@@ -24,9 +24,9 @@ PYNVML_INITIALIZED_SUCCESSFULLY = False
 try:
     import pynvml
     PYNVML_AVAILABLE = True
-    # print("PyNVML library found. GPU monitoring will be attempted.") # Commented out to avoid startup noise
+    # print("PyNVML library found. GPU monitoring will be attempted.")  # Commented out to avoid startup noise
 except ImportError:
-    # print("PyNVML (nvidia-ml-py) library not found. GPU monitoring will be disabled. Install with 'pip install nvidia-ml-py3'") # Commented out
+    # print("PyNVML (nvidia-ml-py) library not found. GPU monitoring will be disabled. Install with 'pip install nvidia-ml-py3'")  # Commented out
     pynvml = None
 except Exception as e:
     print(f"Unexpected error during PyNVML import: {e}")
@@ -35,7 +35,7 @@ except Exception as e:
 JOBS_DIR = "training_jobs"
 CONFIGS_DIR = "model_configs"
 os.makedirs(JOBS_DIR, exist_ok=True)
-os.makedirs(CONFIGS_DIR, exist_ok=True) 
+os.makedirs(CONFIGS_DIR, exist_ok=True)
 
 active_jobs: Dict[str, Dict[str, Any]] = {}
 model_configs: Dict[str, Dict[str, Any]] = {}
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
                 model_configs[config_id] = config_data
     print(f"Loaded {len(model_configs)} model configurations into memory.")
 
-    yield # This is where your application will run
+    yield  # This is where your application will run
 
     # Shutdown logic
     if PYNVML_INITIALIZED_SUCCESSFULLY and pynvml:
@@ -88,17 +88,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Unexpected error during global PyNVML shutdown: {e}")
 
-
 app = FastAPI(title="ZPE Quantum Neural Network Training API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True, 
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 class TrainingParameters(BaseModel):
     totalEpochs: int
@@ -108,7 +106,7 @@ class TrainingParameters(BaseModel):
     momentumParams: List[float]
     strengthParams: List[float]
     noiseParams: List[float]
-    couplingParams: Optional[List[float]] = None # Added couplingParams as optional
+    couplingParams: Optional[List[float]] = None  # Added couplingParams as optional
     quantumCircuitSize: int
     labelSmoothing: float
     quantumMode: bool
@@ -123,8 +121,7 @@ class ModelConfig(BaseModel):
     accuracy: float
     loss: float
     use_quantum_noise: bool
-    channel_sizes: Optional[List[int]] = None # Added channel_sizes as optional
-
+    channel_sizes: Optional[List[int]] = None  # Added channel_sizes as optional
 
 class ZPEDeepNet(nn.Module):
     def __init__(self, input_channels=1, output_size=10, sequence_length=10):
@@ -167,10 +164,10 @@ class ZPEDeepNet(nn.Module):
         divisible_size = (batch_mean.size(0) // self.sequence_length) * self.sequence_length
         if divisible_size == 0:
             if batch_mean.size(0) > 0:
-                 padding_size = self.sequence_length - batch_mean.size(0)
-                 if padding_size < 0: padding_size = 0
-                 batch_mean_padded = torch.cat((batch_mean, torch.zeros(padding_size, device=self.device)))
-                 reshaped = batch_mean_padded.view(-1, self.sequence_length)
+                padding_size = self.sequence_length - batch_mean.size(0)
+                if padding_size < 0: padding_size = 0
+                batch_mean_padded = torch.cat((batch_mean, torch.zeros(padding_size, device=self.device)))
+                reshaped = batch_mean_padded.view(-1, self.sequence_length)
             else: return
         else:
             batch_mean_truncated = batch_mean[:divisible_size]
@@ -187,8 +184,8 @@ class ZPEDeepNet(nn.Module):
         if x.numel() == 0: return x
         feature_size = x.size(1) if spatial else x.size(-1)
         if feature_size == 0 and x.numel() > 0:
-             if not spatial and x.dim() == 2: feature_size = x.size(-1)
-             else: return x
+            if not spatial and x.dim() == 2: feature_size = x.size(-1)
+            else: return x
         elif feature_size == 0 and x.numel() == 0: return x
         if self.sequence_length == 0: return x
 
@@ -197,14 +194,14 @@ class ZPEDeepNet(nn.Module):
         if spatial:
             if x.size(2) == 0 or x.size(3) == 0: return x
             num_elements_to_cover = x.size(2) * x.size(3)
-            repeats = (num_elements_to_cover + self.sequence_length -1) // self.sequence_length
+            repeats = (num_elements_to_cover + self.sequence_length - 1) // self.sequence_length
             flow_expanded_flat = flow.repeat(repeats)[:num_elements_to_cover]
             flow_expanded = flow_expanded_flat.view(1, 1, x.size(2), x.size(3))
             if x.size(1) > 0: flow_expanded = flow_expanded.expand(x.size(0), x.size(1), x.size(2), x.size(3))
         else:
             if x.size(-1) == 0: return x
             num_elements_to_cover = x.size(-1)
-            repeats = (num_elements_to_cover + self.sequence_length -1) // self.sequence_length
+            repeats = (num_elements_to_cover + self.sequence_length - 1) // self.sequence_length
             flow_expanded_flat = flow.repeat(repeats)[:num_elements_to_cover]
             flow_expanded = flow_expanded_flat.view(1, -1).expand_as(x)
         return x * flow_expanded
@@ -217,6 +214,7 @@ class ZPEDeepNet(nn.Module):
         x = self.apply_zpe(x, 4); x = self.fc(x)
         x = self.apply_zpe(x, 5, spatial=False)
         return x
+
     def analyze_zpe_effect(self):
         return [torch.mean(torch.abs(flow - 1.0)).item() for flow in self.zpe_flows]
 
@@ -226,11 +224,11 @@ def mixup(data, targets, alpha=1.0, device='cpu'):
     lam = np.random.beta(alpha, alpha)
     return lam * data + (1 - lam) * shuffled_data, targets, shuffled_targets, lam
 
-def get_gpu_usage_info() -> Dict[str, Any]:
+def get_gpu_usage_info_internal() -> Dict[str, Any]:
     if not PYNVML_AVAILABLE or not pynvml:
         return {"error": "PyNVML library not available/imported. Cannot fetch GPU stats."}
     if not PYNVML_INITIALIZED_SUCCESSFULLY:
-         return {"error": "PyNVML not initialized successfully at startup. Cannot fetch GPU stats."}
+        return {"error": "PyNVML not initialized successfully at startup. Cannot fetch GPU stats."}
     try:
         num_gpus = pynvml.nvmlDeviceGetCount()
         if num_gpus == 0: return {"info": "No NVIDIA GPUs detected."}
@@ -243,6 +241,10 @@ def get_gpu_usage_info() -> Dict[str, Any]:
             power_draw_mw = None
             try: power_draw_mw = pynvml.nvmlDeviceGetPowerUsage(handle)
             except pynvml.NVMLError_NotSupported: power_draw_mw = None
+            fan_speed = None
+            try: fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)  # For single fan
+            except pynvml.NVMLError_NotSupported: fan_speed = None
+            except Exception: fan_speed = None  # Catch other errors like if device has 0 fans
             gpu_name_bytes = pynvml.nvmlDeviceGetName(handle)
             gpu_name = gpu_name_bytes.decode('utf-8') if isinstance(gpu_name_bytes, bytes) else gpu_name_bytes
             gpu_info_list.append({
@@ -255,6 +257,7 @@ def get_gpu_usage_info() -> Dict[str, Any]:
                 "memory_used_percent": float(mem_info.used * 100 / mem_info.total) if mem_info.total > 0 else 0.0,
                 "temperature_c": float(temp),
                 "power_draw_w": float(power_draw_mw / 1000.0) if power_draw_mw is not None else None,
+                "fan_speed_percent": float(fan_speed) if fan_speed is not None else None,
             })
         return gpu_info_list[0] if gpu_info_list else {"info": "No GPU stats could be retrieved."}
     except pynvml.NVMLError as e:
@@ -262,10 +265,24 @@ def get_gpu_usage_info() -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"General Error fetching GPU stats: {str(e)}"}
 
+def get_cpu_usage_info_detailed() -> Dict[str, Any]:
+    """Fetches detailed CPU usage and frequency."""
+    try:
+        # Get overall CPU usage percentage
+        overall_usage = psutil.cpu_percent(interval=0.1)
+        # Get current CPU frequency
+        frequency = psutil.cpu_freq()
+        return {
+            "overall_usage_percent": float(overall_usage),
+            "current_frequency_mhz": float(frequency.current) if frequency else None,
+        }
+    except Exception as e:
+        return {"error": f"Error fetching CPU stats: {str(e)}"}
+
 def save_job_status(job_id: str):
     if job_id not in active_jobs: return
     job_file = os.path.join(JOBS_DIR, f"{job_id}.json")
-    try: 
+    try:
         with open(job_file, "w") as f: json.dump(active_jobs[job_id], f, indent=2)
     except Exception as e: print(f"Error saving job status for {job_id}: {e}")
 
@@ -273,15 +290,15 @@ def load_job_status(job_id: str) -> Optional[Dict[str, Any]]:
     job_file = os.path.join(JOBS_DIR, f"{job_id}.json")
     if os.path.exists(job_file):
         try:
-            with open(job_file, "r") as f: return json.load(f) 
+            with open(job_file, "r") as f: return json.load(f)
         except Exception as e: print(f"Error loading job status for {job_id}: {e}")
     return None
 
-# New functions for saving and loading model configurations
+# Functions for saving and loading model configurations
 def save_model_config(config_id: str):
     if config_id not in model_configs: return
     config_file = os.path.join(CONFIGS_DIR, f"{config_id}.json")
-    try: 
+    try:
         with open(config_file, "w") as f: json.dump(model_configs[config_id], f, indent=2)
     except Exception as e: print(f"Error saving model config for {config_id}: {e}")
 
@@ -289,10 +306,9 @@ def load_model_config(config_id: str) -> Optional[Dict[str, Any]]:
     config_file = os.path.join(CONFIGS_DIR, f"{config_id}.json")
     if os.path.exists(config_file):
         try:
-            with open(config_file, "r") as f: return json.load(f) 
+            with open(config_file, "r") as f: return json.load(f)
         except Exception as e: print(f"Error loading model config for {config_id}: {e}")
     return None
-
 
 def run_training_job(job_id: str, params: TrainingParameters):
     global active_jobs
@@ -302,18 +318,19 @@ def run_training_job(job_id: str, params: TrainingParameters):
         else:
             active_jobs[job_id] = {
                 "job_id": job_id, "status": "failed", "log_messages": [f"Job ID {job_id} not found."],
-                "parameters": params.model_dump(), "total_epochs": params.totalEpochs, "current_epoch":0, 
-                "accuracy":0.0, "loss":0.0, "zpe_effects":[], 
-                "start_time": datetime.now().isoformat(), "end_time": datetime.now().isoformat(), 
-                "gpu_info": get_gpu_usage_info() 
+                "parameters": params.model_dump(), "total_epochs": params.totalEpochs, "current_epoch": 0,
+                "accuracy": 0.0, "loss": 0.0, "zpe_effects": [],
+                "start_time": datetime.now().isoformat(), "end_time": datetime.now().isoformat(),
+                "gpu_info": get_gpu_usage_info_internal()
             }
-            save_job_status(job_id); return
+            save_job_status(job_id)
+            return
 
     job_status = active_jobs[job_id]
     job_status["status"] = "running"
     job_status["log_messages"].append(f"Starting PyTorch training: {params.modelName}")
     job_status["start_time"] = datetime.now().isoformat()
-    job_status["gpu_info"] = get_gpu_usage_info()
+    job_status["gpu_info"] = get_gpu_usage_info_internal()
     save_job_status(job_id)
 
     try:
@@ -331,18 +348,20 @@ def run_training_job(job_id: str, params: TrainingParameters):
         train_loader = DataLoader(train_dataset_full, batch_size=params.batchSize, shuffle=True, num_workers=2, pin_memory=(device.type == 'cuda'))
         val_loader = DataLoader(val_dataset, batch_size=params.batchSize, shuffle=False, num_workers=2, pin_memory=(device.type == 'cuda'))
         job_status["log_messages"].append(f"DataLoaders created. Train: {len(train_loader)}, Val: {len(val_loader)} batches.")
-        model = ZPEDeepNet(input_channels=1, output_size=10, sequence_length=10).to(device) # MNIST specific
+        model = ZPEDeepNet(input_channels=1, output_size=10, sequence_length=10).to(device)  # MNIST specific
         criterion = nn.CrossEntropyLoss(label_smoothing=params.labelSmoothing)
         optimizer = optim.Adam(model.parameters(), lr=params.learningRate, weight_decay=params.weightDecay)
         scheduler = CosineAnnealingLR(optimizer, T_max=params.totalEpochs)
         job_status["log_messages"].append("Model & Optimizer initialized.")
-        job_status["gpu_info"] = get_gpu_usage_info(); save_job_status(job_id)
+        job_status["gpu_info"] = get_gpu_usage_info_internal()
+        save_job_status(job_id)
 
         for epoch in range(1, params.totalEpochs + 1):
             if job_status["status"] == "stopped": job_status["log_messages"].append("Training stopped."); break
             model.train(); epoch_loss_sum, num_batches_epoch = 0.0, 0
             job_status["log_messages"].append(f"--- Epoch {epoch}/{params.totalEpochs} ---")
-            job_status["gpu_info"] = get_gpu_usage_info(); save_job_status(job_id)
+            job_status["gpu_info"] = get_gpu_usage_info_internal()
+            save_job_status(job_id)
 
             for batch_idx, (data, target) in enumerate(train_loader):
                 if job_status["status"] == "stopped": break
@@ -357,28 +376,27 @@ def run_training_job(job_id: str, params: TrainingParameters):
                     job_status.update({
                         "current_epoch": epoch, "loss": loss.item(),
                         "zpe_effects": model.analyze_zpe_effect(),
-                        "gpu_info": get_gpu_usage_info()
+                        "gpu_info": get_gpu_usage_info_internal()
                     })
-                    # Ensure status is saved correctly even with GPU info update
                     try: save_job_status(job_id)
                     except Exception as e: print(f"Error saving job status during epoch {epoch}, batch {batch_idx}: {e}")
 
             scheduler.step()
             avg_epoch_train_loss = epoch_loss_sum / num_batches_epoch if num_batches_epoch > 0 else 0.0
-            model.eval(); val_correct, val_total, val_loss_sum, val_batches_epoch = 0,0,0.0,0
+            model.eval(); val_correct, val_total, val_loss_sum, val_batches_epoch = 0, 0, 0.0, 0
             with torch.no_grad():
                 for data_val, target_val in val_loader:
                     data_val, target_val = data_val.to(device), target_val.to(device)
                     output_val = model(data_val); val_loss = criterion(output_val, target_val)
-                    val_loss_sum += val_loss.item(); val_batches_epoch +=1
+                    val_loss_sum += val_loss.item(); val_batches_epoch += 1
                     _, predicted_val = torch.max(output_val.data, 1)
                     val_total += target_val.size(0); val_correct += (predicted_val == target_val).sum().item()
-            val_accuracy = (100 * val_correct / val_total) if val_total > 0 else 0.0 
+            val_accuracy = (100 * val_correct / val_total) if val_total > 0 else 0.0
             avg_epoch_val_loss = val_loss_sum / val_batches_epoch if val_batches_epoch > 0 else 0.0
             job_status.update({
                 "current_epoch": epoch, "accuracy": val_accuracy, "loss": avg_epoch_val_loss,
                 "zpe_effects": model.analyze_zpe_effect(),
-                "gpu_info": get_gpu_usage_info()
+                "gpu_info": get_gpu_usage_info_internal()
             })
             job_status["log_messages"].append(f"E{epoch} END - TrainL: {avg_epoch_train_loss:.4f}, ValAcc: {val_accuracy:.2f}%, ValL: {avg_epoch_val_loss:.4f}")
             job_status["log_messages"].append(f"ZPE: {[float(f'{x:.4f}') for x in job_status['zpe_effects']]}")
@@ -397,19 +415,19 @@ def run_training_job(job_id: str, params: TrainingParameters):
         job_status["log_messages"].extend([error_msg, tb_str]); print(error_msg, "\n", tb_str)
     finally:
         job_status["end_time"] = datetime.now().isoformat()
-        job_status["gpu_info"] = get_gpu_usage_info(); save_job_status(job_id)
-
+        job_status["gpu_info"] = get_gpu_usage_info_internal()
+        save_job_status(job_id)
 
 @app.post("/api/train")
 async def start_training_endpoint(params: TrainingParameters, background_tasks: BackgroundTasks):
-    job_id = f"zpe_job_{str(uuid.uuid4())[:8]}" 
+    job_id = f"zpe_job_{str(uuid.uuid4())[:8]}"
     active_jobs[job_id] = {
         "job_id": job_id, "status": "pending", "current_epoch": 0,
         "total_epochs": params.totalEpochs, "accuracy": 0.0, "loss": 0.0,
         "zpe_effects": [0.0] * 6,
         "log_messages": [f"Init job: {params.modelName}"],
         "parameters": params.model_dump(), "start_time": None, "end_time": None,
-        "gpu_info": get_gpu_usage_info()
+        "gpu_info": get_gpu_usage_info_internal()
     }
     save_job_status(job_id)
     background_tasks.add_task(run_training_job, job_id, params)
@@ -418,7 +436,7 @@ async def start_training_endpoint(params: TrainingParameters, background_tasks: 
 @app.get("/api/status/{job_id}")
 async def get_job_status_endpoint(job_id: str):
     if job_id in active_jobs and active_jobs[job_id]["status"] in ["running", "pending"]:
-        if active_jobs[job_id]["status"] == "running": active_jobs[job_id]["gpu_info"] = get_gpu_usage_info()
+        if active_jobs[job_id]["status"] == "running": active_jobs[job_id]["gpu_info"] = get_gpu_usage_info_internal()
         return active_jobs[job_id]
     job_status_from_file = load_job_status(job_id)
     if job_status_from_file:
@@ -480,32 +498,45 @@ async def list_jobs_endpoint(limit: int = 20):
 
 @app.get("/api/gpu-stats")
 async def get_system_gpu_stats_endpoint():
-    return get_gpu_usage_info()
+    return get_gpu_usage_info_internal()
 
-# New endpoint to save model configurations
+@app.get("/api/system-stats")
+async def get_system_general_stats_endpoint():
+    gpu_data = get_gpu_usage_info_internal()
+    primary_gpu_info = None
+    if isinstance(gpu_data, dict) and ("error" in gpu_data or "info" in gpu_data or "id" in gpu_data):
+        primary_gpu_info = gpu_data  # Handles single GPU, error, or info dict
+    # Note: get_gpu_usage_info_internal() already returns primary GPU or error/info if no list
+
+    return {
+        "gpu_info": primary_gpu_info,
+        "cpu_info": get_cpu_usage_info_detailed()
+    }
+
+# Endpoint to save model configurations
 @app.post("/api/configs")
 async def create_model_config_endpoint(config: ModelConfig):
     config_id = f"config_{str(uuid.uuid4())[:8]}"
-    config.id = config_id # Assign a new ID to the incoming config
-    model_configs[config_id] = config.model_dump() # Store the config
-    save_model_config(config_id) # Persist the config to disk
+    config.id = config_id  # Assign a new ID to the incoming config
+    model_configs[config_id] = config.model_dump()  # Store the config
+    save_model_config(config_id)  # Persist the config to disk
     return {"status": "configuration_saved", "config_id": config_id}
 
-# New endpoint to get a single model configuration by ID
+# Endpoint to get a single model configuration by ID
 @app.get("/api/configs/{config_id}")
 async def get_model_config_endpoint(config_id: str):
     if config_id in model_configs:
         return model_configs[config_id]
     config_data_from_file = load_model_config(config_id)
     if config_data_from_file:
-        model_configs[config_id] = config_data_from_file # Load into memory if found on disk
+        model_configs[config_id] = config_data_from_file  # Load into memory if found on disk
         return config_data_from_file
     raise HTTPException(status_code=404, detail=f"Model configuration {config_id} not found")
 
-# New endpoint to list all model configurations
+# Endpoint to list all model configurations
 @app.get("/api/configs")
-async def list_model_configs_endpoint():
-    configs_list = list(model_configs.values()) # Get configs currently in memory
+async def list_model_configs_endpoint(limit: int = 20):
+    configs_list = list(model_configs.values())  # Get configs currently in memory
 
     # Also load any configs from disk that aren't in memory yet
     try:
@@ -514,10 +545,10 @@ async def list_model_configs_endpoint():
             if config_file_name.endswith('.json'):
                 config_id_from_file = config_file_name.replace(".json", "")
                 if config_id_from_file not in model_configs:
-                            config_data = load_model_config(config_id_from_file)
-                            if config_data:
-                                model_configs[config_id_from_file] = config_data # Load into memory
-                                configs_list.append(config_data) # Add to the list
+                    config_data = load_model_config(config_id_from_file)
+                    if config_data:
+                        model_configs[config_id_from_file] = config_data  # Load into memory
+                        configs_list.append(config_data)  # Add to the list
     except Exception as e: print(f"Error listing model configurations from disk: {e}")
 
     return {"configs": configs_list}
@@ -527,34 +558,24 @@ async def delete_model_config_endpoint(config_id: str):
     # Remove from in-memory dictionary
     if config_id in model_configs:
         del model_configs[config_id]
-    
+
     # Remove from disk
     config_file_path = os.path.join(CONFIGS_DIR, f"{config_id}.json")
     if os.path.exists(config_file_path):
         try:
             os.remove(config_file_path)
         except Exception as e:
-            # If deletion from disk fails, log it but still report success if in-memory was deleted.
-            # Or, choose to raise an HTTPException if disk deletion is critical.
             print(f"Error deleting config file {config_file_path}: {e}")
             # Potentially re-add to memory if consistency is paramount and disk deletion fails
-            # This depends on desired error handling strategy. For now, we assume in-memory success is primary.
-            # raise HTTPException(status_code=500, detail=f"Failed to delete config file from disk: {e}")
-
+            # For now, assume in-memory success is primary
         return {"status": "configuration_deleted", "config_id": config_id}
-    
-    # If not in memory and not on disk, it's effectively not found.
-    # Or, if it was only in memory but not on disk (unlikely scenario with current save logic),
-    # in-memory deletion is sufficient.
+
+    # If not in memory and not on disk, it's effectively not found
     if config_id not in model_configs and not os.path.exists(config_file_path):
-         raise HTTPException(status_code=404, detail=f"Model configuration {config_id} not found to delete.")
-    
+        raise HTTPException(status_code=404, detail=f"Model configuration {config_id} not found to delete.")
+
     return {"status": "configuration_deleted_from_memory_only", "config_id": config_id}
-    # This ^^ return is if it was in memory but somehow not on disk.
-    # If it was neither in memory nor on disk, the previous HTTPException would be raised.
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-    
