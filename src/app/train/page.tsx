@@ -1,5 +1,5 @@
-
 "use client";
+
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useForm, Controller, Control, FieldPath, FieldValues } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/hooks/use-toast";
-import { Play, StopCircle, List, Zap, Settings, RefreshCw, AlertTriangle, CheckCircle, ExternalLink, SlidersHorizontal, Atom, Brain, Waves, BrainCircuit, Wand2, Save, Download } from "lucide-react";
+import { Play, StopCircle, List, Zap, Settings, RefreshCw, AlertTriangle, ExternalLink, SlidersHorizontal, Atom, Brain, Waves, BrainCircuit, Wand2, Save, Download } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +25,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { adviseHSQNNParameters, type HSQNNAdvisorInput, type HSQNNAdvisorOutput } from "@/ai/flows/hs-qnn-parameter-advisor";
-
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
@@ -52,914 +51,15 @@ const defaultZPEParams = {
   coupling: [0.85, 0.82, 0.79, 0.76, 0.73, 0.7],
 };
 
-export default function TrainModelPage() {
-  const [activeJob, setActiveJob] = useState<TrainingJob | null>(null);
-  const [jobsList, setJobsList] = useState<TrainingJobSummary[]>([]);
-  const [isLoadingJobs, setIsLoadingJobs] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pollingIntervalId, setPollingIntervalId] = useState<NodeJS.Timeout | null>(null);
-  const [chartData, setChartData] = useState<any[]>([]);
-  
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const prefillEffectRan = useRef(false);
-
-  // State for HS-QNN Mini Advisor
-  const [completedJobsListForAdvisor, setCompletedJobsListForAdvisor] = useState<TrainingJobSummary[]>([]);
-  const [selectedJobIdForMiniAdvisor, setSelectedJobIdForMiniAdvisor] = useState<string>("");
-  const [miniAdvisorObjective, setMiniAdvisorObjective] = useState<string>("Maximize validation accuracy while maintaining ZPE stability and exploring a slight increase in learning rate if previous accuracy was high.");
-  const [miniAdvisorResult, setMiniAdvisorResult] = useState<HSQNNAdvisorOutput | null>(null);
-  const [isLoadingMiniAdvisor, setIsLoadingMiniAdvisor] = useState<boolean>(false);
-  const [miniAdvisorError, setMiniAdvisorError] = useState<string | null>(null);
-  const [selectedPreviousJobDetailsForMiniAdvisor, setSelectedPreviousJobDetailsForMiniAdvisor] = useState<TrainingJob | null>(null);
-  const [isMiniAdvisorLoadingJobs, setIsMiniAdvisorLoadingJobs] = useState(false);
-
-
-  const defaultFormValues: TrainingParameters = {
-    modelName: "ZPE-QuantumWeaver-V1",
-    totalEpochs: 30,
-    batchSize: 32,
-    learningRate: 0.001,
-    weightDecay: 0.0001,
-    momentumParams: defaultZPEParams.momentum,
-    strengthParams: defaultZPEParams.strength,
-    noiseParams: defaultZPEParams.noise,
-    couplingParams: defaultZPEParams.coupling,
-    quantumCircuitSize: 32,
-    labelSmoothing: 0.1,
-    quantumMode: true,
-    baseConfigId: undefined,
-  };
-
-  const { control, handleSubmit, reset, watch, formState: { errors }, setValue } = useForm<TrainingParameters>({
-    resolver: zodResolver(trainingFormSchema),
-    defaultValues: defaultFormValues,
-  });
-
-  const fetchCompletedJobsForMiniAdvisor = useCallback(async () => {
-    setIsMiniAdvisorLoadingJobs(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/jobs?limit=50`); 
-      if (!response.ok) throw new Error("Failed to fetch completed jobs list for advisor");
-      const data = await response.json();
-      const completedJobs = (data.jobs || [])
-        .filter((job: TrainingJobSummary) => job.status === "completed")
-        .sort((a: TrainingJobSummary, b: TrainingJobSummary) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
-      setCompletedJobsListForAdvisor(completedJobs);
-      if (completedJobs.length > 0 && !selectedJobIdForMiniAdvisor) {
-        setSelectedJobIdForMiniAdvisor(completedJobs[0].job_id);
-      }
-    } catch (error: any) {
-      toast({ title: "Error fetching completed jobs", description: error.message, variant: "destructive" });
-    } finally {
-      setIsMiniAdvisorLoadingJobs(false);
-    }
-  }, [selectedJobIdForMiniAdvisor]);
-
-  useEffect(() => {
-    fetchCompletedJobsForMiniAdvisor();
-  }, [fetchCompletedJobsForMiniAdvisor]);
-
-  useEffect(() => {
-    if (selectedJobIdForMiniAdvisor) {
-      const fetchDetails = async () => {
-        setIsLoadingMiniAdvisor(true);
-        setMiniAdvisorResult(null);
-        setMiniAdvisorError(null);
-        try {
-          const response = await fetch(`${API_BASE_URL}/status/${selectedJobIdForMiniAdvisor}`);
-          if (!response.ok) throw new Error(`Failed to fetch details for job ${selectedJobIdForMiniAdvisor}`);
-          const data: TrainingJob = await response.json();
-           if (data.status !== 'completed') {
-            setSelectedPreviousJobDetailsForMiniAdvisor(null);
-            throw new Error(`Job ${selectedJobIdForMiniAdvisor} is not completed. Current status: ${data.status}`);
-          }
-          setSelectedPreviousJobDetailsForMiniAdvisor(data);
-        } catch (e: any) {
-          setSelectedPreviousJobDetailsForMiniAdvisor(null);
-          setMiniAdvisorError("Failed to fetch selected job details for advisor: " + e.message);
-          toast({ title: "Error fetching job details", description: e.message, variant: "destructive" });
-        } finally {
-          setIsLoadingMiniAdvisor(false);
-        }
-      };
-      fetchDetails();
-    } else {
-      setSelectedPreviousJobDetailsForMiniAdvisor(null);
-    }
-  }, [selectedJobIdForMiniAdvisor]);
-
-
-  const handleGetMiniAdvice = async () => {
-    if (!selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "Error", description: "No previous job selected for HNN advice.", variant: "destructive" });
-      return;
-    }
-    if (selectedPreviousJobDetailsForMiniAdvisor.status !== 'completed') {
-      toast({ title: "Invalid Job", description: "Please select a 'completed' job for HNN advice.", variant: "destructive" });
-      return;
-    }
-
-    setIsLoadingMiniAdvisor(true);
-    setMiniAdvisorError(null);
-    setMiniAdvisorResult(null);
-    
-    let validatedPreviousParams: TrainingParameters;
-      try {
-          const paramsToValidate = {
-              ...defaultFormValues, 
-              ...selectedPreviousJobDetailsForMiniAdvisor.parameters, 
-          };
-          validatedPreviousParams = trainingFormSchema.parse(paramsToValidate);
-      } catch (validationError: any) {
-          console.error("Validation error for previousTrainingParameters (mini advisor):", validationError);
-          setMiniAdvisorError("Previous job parameters are not in the expected format. Check console for details. Error: " + validationError.message);
-          toast({ title: "Parameter Mismatch", description: "Previous job parameters format error. " + validationError.message, variant: "destructive" });
-          setIsLoadingMiniAdvisor(false);
-          return;
-      }
-
-    const inputForAI: HSQNNAdvisorInput = {
-      previousJobId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
-      previousZpeEffects: selectedPreviousJobDetailsForMiniAdvisor.zpe_effects || Array(6).fill(0),
-      previousTrainingParameters: validatedPreviousParams,
-      hnnObjective: miniAdvisorObjective,
-    };
-
-    try {
-      const output = await adviseHSQNNParameters(inputForAI);
-      setMiniAdvisorResult(output);
-      toast({ title: "HNN Advice Generated", description: "AI has provided suggestions." });
-    } catch (e: any) {
-      setMiniAdvisorError("AI HNN advice generation failed: " + e.message);
-      toast({ title: "HNN Advice Failed", description: e.message, variant: "destructive" });
-    } finally {
-      setIsLoadingMiniAdvisor(false);
-    }
-  };
-
-  const handleApplyMiniAdvice = () => {
-    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "No advice to apply", variant: "destructive" });
-      return;
-    }
-  
-    const currentFormValues = watch();
-    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
-    
-    const newFormValues: TrainingParameters = {
-      ...defaultFormValues, 
-      ...currentFormValues, 
-      ...selectedPreviousJobDetailsForMiniAdvisor.parameters, 
-      ...suggested, 
-    };
-    
-    newFormValues.modelName = suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_adv_${Date.now().toString().slice(-3)}`;
-    newFormValues.baseConfigId = selectedPreviousJobDetailsForMiniAdvisor.job_id;
-    
-    const validationResult = trainingFormSchema.safeParse(newFormValues);
-
-    if (validationResult.success) {
-      reset(validationResult.data);
-      toast({ title: "Parameters Applied", description: "Advisor suggestions applied to the form." });
-    } else {
-       console.error("Validation error applying HNN mini-advice:", validationResult.error.flatten().fieldErrors);
-       let errorSummary = "Error applying advice: ";
-       Object.entries(validationResult.error.flatten().fieldErrors).forEach(([key, messages]) => {
-        if (messages) errorSummary += `${key}: ${messages.join(', ')} `;
-       });
-       toast({ title: "Validation Error on Apply", description: errorSummary, variant: "destructive" });
-    }
-  };
-
-  const handleSaveSuggestedParameters = async () => {
-    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "Error", description: "No suggested parameters to save.", variant: "destructive" });
-      return;
-    }
-
-    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
-    const { couplingParams, ...paramsForBackend } = suggested; // Exclude couplingParams
-
-    const configToSave = {
-      name: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-      parameters: {
-        ...defaultFormValues, // Ensure all base training params are there
-        ...selectedPreviousJobDetailsForMiniAdvisor.parameters, // Inherit from previous
-        ...paramsForBackend, // Apply backend-compatible suggestions
-        baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id, // Set base ID
-        modelName: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`, // Ensure modelName is in parameters too
-      },
-      date_created: new Date().toISOString().split('T')[0],
-      accuracy: 0, // New config, no accuracy yet
-      loss: 0, // New config, no loss yet
-      use_quantum_noise: suggested.quantumMode !== undefined ? suggested.quantumMode : selectedPreviousJobDetailsForMiniAdvisor.parameters.quantumMode,
-    };
-    
-    // Ensure all required fields for backend TrainingParameters are present
-    configToSave.parameters = {
-        totalEpochs: configToSave.parameters.totalEpochs,
-        batchSize: configToSave.parameters.batchSize,
-        learningRate: configToSave.parameters.learningRate,
-        weightDecay: configToSave.parameters.weightDecay,
-        momentumParams: configToSave.parameters.momentumParams,
-        strengthParams: configToSave.parameters.strengthParams,
-        noiseParams: configToSave.parameters.noiseParams,
-        // couplingParams is intentionally omitted for backend compatibility
-        quantumCircuitSize: configToSave.parameters.quantumCircuitSize,
-        labelSmoothing: configToSave.parameters.labelSmoothing,
-        quantumMode: configToSave.parameters.quantumMode,
-        modelName: configToSave.parameters.modelName,
-        baseConfigId: configToSave.parameters.baseConfigId,
-    };
-
-
-    setIsSubmitting(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/configs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(configToSave),
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Failed to save configuration: ${response.status} ${response.statusText}. ${errorData.detail || ''}`);
-      }
-      const saved = await response.json();
-      toast({ title: "Configuration Saved", description: `Config "${configToSave.name}" (ID: ${saved.config_id.slice(-6)}) saved.` });
-    } catch (error: any) {
-      console.error("Error saving suggested parameters:", error);
-      toast({ title: "Save Failed", description: error.message, variant: "destructive" });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDownloadSuggestedParameters = () => {
-    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "Error", description: "No suggested parameters to download.", variant: "destructive" });
-      return;
-    }
-    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
-    const filename = `${suggested.modelName || `advised_params_${Date.now().toString().slice(-4)}`}.json`;
-    const jsonStr = JSON.stringify({
-        ...defaultFormValues, // Start with defaults
-        ...selectedPreviousJobDetailsForMiniAdvisor.parameters, // Inherit from previous
-        ...suggested, // Apply AI suggestions (this will include couplingParams for user's reference)
-        modelName: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-        baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
-    }, null, 2);
-    
-    const blob = new Blob([jsonStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast({ title: "Parameters Downloaded", description: `Saved as ${filename}` });
-  };
-
-
-  useEffect(() => {
-    if (prefillEffectRan.current || typeof window === 'undefined') return;
-
-    const paramsToPrefill: Partial<TrainingParameters> = {};
-    let hasDirectParams = false;
-
-    for (const key in defaultFormValues) {
-        if (searchParams.has(key)) {
-            hasDirectParams = true;
-            const value = searchParams.get(key);
-            if (value !== null) {
-                 try {
-                    if (Array.isArray(defaultFormValues[key as keyof TrainingParameters])) {
-                        (paramsToPrefill as any)[key] = JSON.parse(value);
-                    } else if (typeof defaultFormValues[key as keyof TrainingParameters] === 'number') {
-                        (paramsToPrefill as any)[key] = parseFloat(value);
-                    } else if (typeof defaultFormValues[key as keyof TrainingParameters] === 'boolean') {
-                        (paramsToPrefill as any)[key] = value === 'true';
-                    } else {
-                        (paramsToPrefill as any)[key] = value;
-                    }
-                 } catch (e) {
-                    console.error(`Error parsing query param ${key}:`, e);
-                    toast({ title: "Prefill Error", description: `Could not parse ${key} from URL. Using default.`, variant: "destructive" });
-                 }
-            }
-        }
-    }
-    
-    const loadAndPrefill = async () => {
-      if (hasDirectParams) {
-          toast({ title: "Pre-filling form...", description: "Loading parameters from URL." });
-          const validatedParams = trainingFormSchema.safeParse({...defaultFormValues, ...paramsToPrefill});
-          if (validatedParams.success) {
-              reset(validatedParams.data);
-              toast({ title: "Form Pre-filled", description: "Parameters loaded from URL." });
-          } else {
-              console.error("Direct prefill validation error:", validatedParams.error);
-              toast({ title: "Prefill Validation Error", description: "Some parameters from URL were invalid. Defaults used where necessary.", variant: "destructive" });
-              reset({...defaultFormValues, ...paramsToPrefill}); 
-          }
-      } else {
-        const prefillJobId = searchParams.get("prefill");
-        if (prefillJobId) {
-          toast({ title: "Pre-filling form...", description: `Loading parameters from job ${prefillJobId.slice(-6)}` });
-          try {
-            const response = await fetch(`${API_BASE_URL}/status/${prefillJobId}`);
-            if (!response.ok) {
-              throw new Error(`Failed to fetch job details for prefill: ${response.statusText}`);
-            }
-            const jobToPrefill: TrainingJob = await response.json();
-            
-            const paramsWithNewNameAndBaseId = {
-                ...defaultFormValues, 
-                ...jobToPrefill.parameters, 
-                modelName: `${jobToPrefill.parameters.modelName}_retrain_${Date.now().toString().slice(-4)}`,
-                baseConfigId: prefillJobId,
-            };
-            
-            const validatedParams = trainingFormSchema.safeParse(paramsWithNewNameAndBaseId);
-            if (validatedParams.success) {
-                reset(validatedParams.data);
-                toast({ title: "Form Pre-filled", description: `Loaded parameters from job ${jobToPrefill.parameters.modelName}. Model name updated.` });
-            } else {
-                console.error("Job prefill validation error:", validatedParams.error);
-                let errorMessages = "Validation errors: ";
-                validatedParams.error.errors.forEach(err => {
-                    errorMessages += `${err.path.join('.')}: ${err.message}. `;
-                });
-                throw new Error(`Parameters from job ${prefillJobId.slice(-6)} are not valid. ${errorMessages}`);
-            }
-          } catch (e: any) {
-            console.error("Error pre-filling form from job ID:", e);
-            toast({ title: "Pre-fill Failed", description: e.message, variant: "destructive" });
-          }
-        }
-      }
-      prefillEffectRan.current = true;
-    };
-
-    loadAndPrefill();
-
-  }, [searchParams, reset, setValue]);
-
-
-  const fetchJobsList = useCallback(async () => {
-    setIsLoadingJobs(true);
-    try {
-      const response = await fetch(API_BASE_URL + '/jobs?limit=20');
-      if (!response.ok) throw new Error("Failed to fetch jobs list");
-      const data = await response.json();
-      setJobsList((data.jobs || []).sort((a: TrainingJobSummary, b: TrainingJobSummary) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime()));
-    } catch (error: any) {
-      toast({ title: "Error fetching jobs", description: error.message, variant: "destructive" });
-    } finally {
-      setIsLoadingJobs(false);
-    }
-  }, []);
-
-  const pollJobStatus = useCallback(async (jobId: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
-      if (!response.ok) {
-        if (pollingIntervalId) clearInterval(pollingIntervalId);
-        setPollingIntervalId(null);
-        throw new Error(`Failed to fetch job status for ${jobId}`);
-      }
-      const jobData: TrainingJob = await response.json();
-      setActiveJob(jobData);
-      
-      if (jobData.status === "running" || jobData.status === "completed") {
-        setChartData(prev => {
-          const newPoint = { 
-            epoch: jobData.current_epoch, 
-            accuracy: jobData.accuracy, 
-            loss: jobData.loss,
-            avg_zpe: jobData.zpe_effects && jobData.zpe_effects.length > 0 ? jobData.zpe_effects.reduce((a,b)=>a+b,0) / (jobData.zpe_effects.length) : 0
-          };
-          const existingPointIndex = prev.findIndex(p => p.epoch === newPoint.epoch);
-          if (existingPointIndex > -1) {
-            const updatedPrev = [...prev];
-            updatedPrev[existingPointIndex] = newPoint;
-            return updatedPrev;
-          }
-          return [...prev, newPoint].sort((a,b) => a.epoch - b.epoch);
-        });
-      }
-
-      if (jobData.status === "completed" || jobData.status === "failed" || jobData.status === "stopped") {
-        if (pollingIntervalId) clearInterval(pollingIntervalId);
-        setPollingIntervalId(null);
-        fetchJobsList(); 
-        toast({ title: `Job ${jobData.status}`, description: `Job ${jobId.replace('zpe_job_','')} (${jobData.parameters.modelName}) finished with status: ${jobData.status}. Accuracy: ${jobData.accuracy.toFixed(2)}%` });
-      }
-    } catch (error: any) {
-      toast({ title: "Error polling job status", description: error.message, variant: "destructive" });
-      if (pollingIntervalId) clearInterval(pollingIntervalId);
-      setPollingIntervalId(null);
-    }
-  }, [pollingIntervalId, fetchJobsList]);
-
-  useEffect(() => {
-    fetchJobsList();
-    const currentJobId = activeJob?.job_id;
-    if (currentJobId && (activeJob?.status === 'running' || activeJob?.status === 'pending')) {
-        const intervalId = setInterval(() => pollJobStatus(currentJobId), 2000);
-        setPollingIntervalId(intervalId);
-    }
-    return () => {
-      if (pollingIntervalId) clearInterval(pollingIntervalId);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchJobsList]); 
-
-  const onSubmit = async (data: TrainingParameters) => {
-    setIsSubmitting(true);
-    setChartData([]); 
-    try {
-      const response = await fetch(`${API_BASE_URL}/train`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!response.ok) throw new Error(`Failed to start training job. Server responded with ${response.status}`);
-      const result = await response.json();
-      if (!result.job_id) throw new Error("Backend did not return a job_id.");
-      
-      setActiveJob({
-        job_id: result.job_id,
-        status: "pending",
-        current_epoch: 0,
-        total_epochs: data.totalEpochs,
-        accuracy: 0,
-        loss: 0,
-        zpe_effects: Array(6).fill(0), 
-        log_messages: [`Job ${result.job_id} submitted.`],
-        parameters: data,
-      });
-      const intervalId = setInterval(() => pollJobStatus(result.job_id), 2000);
-      setPollingIntervalId(intervalId);
-      fetchJobsList(); 
-      toast({ title: "Training Started", description: `Job ID: ${result.job_id.replace('zpe_job_','')}` });
-    } catch (error: any) {
-      toast({ title: "Error starting training", description: error.message, variant: "destructive" });
-      setActiveJob(null);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleStopJob = async (jobId: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/stop/${jobId}`, { method: "POST" });
-      if (!response.ok) throw new Error("Failed to stop job");
-      toast({ title: "Stop Request Sent", description: `Requested stop for job ${jobId.replace('zpe_job_','')}` });
-    } catch (error: any) {
-      toast({ title: "Error stopping job", description: error.message, variant: "destructive" });
-    }
-  };
-  
-  const handleViewJobDetails = async (jobId: string) => {
-    if (pollingIntervalId) clearInterval(pollingIntervalId); 
-    setChartData([]); 
-    const jobSummary = jobsList.find(j => j.job_id === jobId);
-    
-    setIsSubmitting(true); 
-    try {
-      const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
-      if (!response.ok) throw new Error("Failed to fetch job details");
-      const data: TrainingJob = await response.json();
-      setActiveJob(data);
-
-      if (data.status !== "running" && data.status !== "pending" && data.log_messages) {
-        const parsedChartData = data.log_messages
-          .map(log => {
-            const epochMatch = log.match(/E(\d+)\s+B\d+\/\d+\s+L:\s*([\d.]+)/); 
-            const endEpochMatch = log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: ([\d.]+)%, ValL: ([\d.]+)/); 
-            const zpeMatch = log.match(/ZPE: \[([,\d\s.]+)\]/); 
-
-            let epochData: any = {};
-
-            if (endEpochMatch) {
-                epochData.epoch = parseInt(endEpochMatch[1]);
-                epochData.accuracy = parseFloat(endEpochMatch[2]);
-                epochData.loss = parseFloat(endEpochMatch[3]);
-            } else if (epochMatch) {
-                epochData.epoch = parseInt(epochMatch[1]);
-                epochData.loss = parseFloat(epochMatch[2]);
-            }
-            
-            if (zpeMatch && epochData.epoch) { 
-                const zpeValues = zpeMatch[1].split(',').map(s => parseFloat(s.trim()));
-                epochData.avg_zpe = zpeValues.reduce((a, b) => a + b, 0) / zpeValues.length;
-            }
-            
-            return epochData.epoch ? epochData : null;
-          })
-          .filter(Boolean)
-          .reduce((acc: any[], current: any) => { 
-            const existing = acc.find(item => item.epoch === current.epoch);
-            if (existing) {
-                Object.assign(existing, current); 
-            } else {
-                acc.push(current);
-            }
-            return acc;
-          }, [])
-          .sort((a,b) => a!.epoch - b!.epoch);
-
-          if (parsedChartData.length > 0) {
-            setChartData(parsedChartData);
-          } else if (data.status === "completed" || data.status === "stopped") { 
-             setChartData([{ 
-                epoch: data.current_epoch, 
-                accuracy: data.accuracy, 
-                loss: data.loss, 
-                avg_zpe: data.zpe_effects && data.zpe_effects.length > 0 ? data.zpe_effects.reduce((a,b)=>a+b,0) / data.zpe_effects.length : 0
-             }]);
-          }
-      } else if (data.status === "running" || data.status === "pending") {
-        pollJobStatus(jobId); 
-        const intervalId = setInterval(() => pollJobStatus(jobId), 2000);
-        setPollingIntervalId(intervalId);
-      }
-    } catch (error: any) {
-      toast({ title: "Error fetching job details", description: error.message, variant: "destructive"});
-      setActiveJob(null); 
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const renderParamArrayFields = (paramName: "momentumParams" | "strengthParams" | "noiseParams" | "couplingParams", labelPrefix: string, Icon: React.ElementType) => (
-    <div className="space-y-3 p-3 border rounded-md bg-muted/30">
-      <Label className="text-base flex items-center gap-2"><Icon className="h-4 w-4 text-primary"/>{labelPrefix} <span className="text-xs text-muted-foreground">(6 layers)</span></Label>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2">
-        {(watch(paramName) || Array(6).fill(0)).map((_, index) => (
-          <div key={index} className="space-y-1">
-            <Label htmlFor={`${paramName}.${index}`} className="text-xs text-muted-foreground">Layer {index + 1}</Label>
-            <Controller
-              name={`${paramName}.${index}` as any}
-              control={control}
-              render={({ field, fieldState }) => (
-                <>
-                  <Input
-                    {...field}
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="1"
-                    className="h-8 text-sm"
-                    value={typeof field.value === 'number' ? field.value : ''}
-                    onChange={e => field.onChange(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                  />
-                  {fieldState.error && <p className="text-xs text-destructive">{fieldState.error.message}</p>}
-                </>
-              )}
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="container mx-auto p-4 md:p-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">ZPE Model Training Orchestrator</h1>
-          <p className="text-muted-foreground">Configure, initiate, and monitor ZPE-enhanced neural network training jobs.</p>
-        </div>
-         <Button onClick={fetchJobsList} variant="outline" disabled={isLoadingJobs}>
-          <RefreshCw className={`mr-2 h-4 w-4 ${isLoadingJobs ? 'animate-spin' : ''}`} /> Refresh Job List
-        </Button>
-      </div>
-      <div className="grid lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Settings className="h-5 w-5 text-primary" /> Training Configuration</CardTitle>
-            <CardDescription>Define parameters for your ZPE model training job.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-              <Tabs defaultValue="general">
-                <TabsList className="grid w-full grid-cols-3 mb-4">
-                  <TabsTrigger value="general">General</TabsTrigger>
-                  <TabsTrigger value="zpe">ZPE</TabsTrigger>
-                  <TabsTrigger value="quantum">Quantum</TabsTrigger>
-                </TabsList>
-                <TabsContent value="general" className="space-y-3">
-                  <FieldController control={control} name="modelName" label="Model Name" placeholder="e.g., MyZPEModel_V1" />
-                  <FieldController control={control} name="totalEpochs" label="Total Epochs" type="number" min="1" />
-                  <FieldController control={control} name="batchSize" label="Batch Size" type="number" min="1" />
-                  <FieldController control={control} name="learningRate" label="Learning Rate" type="number" step="0.0001" />
-                  <FieldController control={control} name="weightDecay" label="Weight Decay" type="number" step="0.00001" />
-                  <FieldController control={control} name="labelSmoothing" label="Label Smoothing" type="number" step="0.01" />
-                </TabsContent>
-                <TabsContent value="zpe" className="space-y-3">
-                  {renderParamArrayFields("momentumParams", "Momentum Parameters", SlidersHorizontal)}
-                  {renderParamArrayFields("strengthParams", "Strength Parameters", Zap)}
-                  {renderParamArrayFields("noiseParams", "Noise Parameters", Waves)}
-                  {renderParamArrayFields("couplingParams", "Coupling Parameters", Brain)}
-                </TabsContent>
-                <TabsContent value="quantum" className="space-y-3">
-                  <FieldControllerSwitch control={control} name="quantumMode" label="Enable Quantum Mode" />
-                  <FieldController control={control} name="quantumCircuitSize" label="Quantum Circuit Size (Qubits)" type="number" min="1" />
-                </TabsContent>
-              </Tabs>
-               <div className="space-y-1 pt-2">
-                <Label htmlFor="baseConfigId">Base Config ID (Optional for HNN)</Label>
-                <Controller
-                    name="baseConfigId"
-                    control={control}
-                    render={({ field, fieldState }) => (
-                        <>
-                            <Input
-                                {...field}
-                                id="baseConfigId"
-                                placeholder="Previous job ID to build upon"
-                                value={field.value || ''}
-                                onChange={(e) => field.onChange(e.target.value || null)} 
-                                className={fieldState.error ? "border-destructive" : ""}
-                            />
-                            {fieldState.error && <p className="text-xs text-destructive">{fieldState.error.message}</p>}
-                        </>
-                    )}
-                />
-                <p className="text-xs text-muted-foreground">If continuing/evolving from a previous job (for HS-QNN).</p>
-              </div>
-
-              <Separator className="my-6" />
-
-              <Card className="bg-muted/20 border-primary/20">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <BrainCircuit className="h-5 w-5 text-primary" /> HS-QNN Mini Advisor
-                  </CardTitle>
-                  <CardDescription className="text-xs">Quick AI advice for the next HNN step.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div>
-                    <Label htmlFor="previousJobForMiniAdvisor" className="text-sm">Base Completed Job</Label>
-                    <Select
-                      value={selectedJobIdForMiniAdvisor}
-                      onValueChange={setSelectedJobIdForMiniAdvisor}
-                      disabled={isMiniAdvisorLoadingJobs || completedJobsListForAdvisor.length === 0}
-                    >
-                      <SelectTrigger id="previousJobForMiniAdvisor" className="h-9 text-sm">
-                        <SelectValue placeholder={
-                          isMiniAdvisorLoadingJobs ? "Loading jobs..." :
-                          completedJobsListForAdvisor.length === 0 ? "No completed jobs found" :
-                          "Select a completed job"
-                        } />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {isMiniAdvisorLoadingJobs && <SelectItem value="loading" disabled>Loading...</SelectItem>}
-                        {!isMiniAdvisorLoadingJobs && completedJobsListForAdvisor.length === 0 && (
-                          <SelectItem value="no-jobs" disabled>No completed jobs</SelectItem>
-                        )}
-                        {completedJobsListForAdvisor.map(job => (
-                          <SelectItem key={job.job_id} value={job.job_id} className="text-xs">
-                            {job.model_name} ({job.job_id.slice(-6)}) - Acc: {job.accuracy.toFixed(2)}%
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {selectedPreviousJobDetailsForMiniAdvisor && (
-                    <div className="text-xs text-muted-foreground p-2 border rounded-md bg-background/50">
-                      Selected: {selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName} (Acc: {selectedPreviousJobDetailsForMiniAdvisor.accuracy.toFixed(2)}%)
-                    </div>
-                  )}
-
-                  <div>
-                    <Label htmlFor="miniAdvisorObjective" className="text-sm">HNN Objective</Label>
-                    <Textarea
-                      id="miniAdvisorObjective"
-                      value={miniAdvisorObjective}
-                      onChange={(e) => setMiniAdvisorObjective(e.target.value)}
-                      rows={2}
-                      placeholder="e.g., Increase ZPE effect in layer 3..."
-                      className="text-xs"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={handleGetMiniAdvice}
-                    disabled={isLoadingMiniAdvisor || !selectedJobIdForMiniAdvisor || !selectedPreviousJobDetailsForMiniAdvisor || (selectedPreviousJobDetailsForMiniAdvisor && selectedPreviousJobDetailsForMiniAdvisor.status !== 'completed')}
-                    className="w-full h-9 text-sm"
-                    variant="outline"
-                  >
-                    {isLoadingMiniAdvisor ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
-                    Get HNN Advice
-                  </Button>
-
-                  {miniAdvisorError && (
-                    <Alert variant="destructive" className="text-xs">
-                      <AlertTriangle className="h-3 w-3" />
-                      <AlertTitle className="text-xs">Advisor Error</AlertTitle>
-                      <AlertDescription>{miniAdvisorError}</AlertDescription>
-                    </Alert>
-                  )}
-
-                  {miniAdvisorResult && (
-                    <div className="space-y-3 pt-3 border-t mt-3">
-                      <Label className="text-xs font-semibold">AI Suggested Changes:</Label>
-                      <ScrollArea className="h-24 border rounded-md p-2 bg-background/50 text-xs font-mono">
-                        <pre>{JSON.stringify(miniAdvisorResult.suggestedNextTrainingParameters, null, 2)}</pre>
-                      </ScrollArea>
-                      <Label className="text-xs font-semibold">Reasoning:</Label>
-                      <ScrollArea className="h-20 border rounded-md p-2 bg-background/50 text-xs">
-                        <p className="whitespace-pre-wrap">{miniAdvisorResult.reasoning}</p>
-                      </ScrollArea>
-                       <div className="space-y-2">
-                        <Button type="button" onClick={handleApplyMiniAdvice} variant="outline" className="w-full h-9 text-sm">
-                          Apply Suggested Parameters to Form
-                        </Button>
-                        <div className="flex gap-2">
-                           <Button 
-                            type="button" 
-                            onClick={handleDownloadSuggestedParameters} 
-                            variant="outline" 
-                            size="sm" 
-                            className="flex-1 text-xs"
-                            disabled={isSubmitting}
-                          >
-                            <Download className="mr-1.5 h-3.5 w-3.5" /> Download JSON
-                          </Button>
-                          <Button 
-                            type="button" 
-                            onClick={handleSaveSuggestedParameters} 
-                            variant="outline" 
-                            size="sm" 
-                            className="flex-1 text-xs"
-                            disabled={isSubmitting}
-                          >
-                            {isSubmitting ? <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
-                             Save to Model Configs
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-              
-              <Separator className="my-6" />
-
-              <Button type="submit" className="w-full mt-2" disabled={isSubmitting || (activeJob?.status === "running" || activeJob?.status === "pending")}>
-                {isSubmitting && !(activeJob?.status === "running" || activeJob?.status === "pending") ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-                Start Training
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-primary"/> Training Monitor</CardTitle>
-            {activeJob ? (
-              <CardDescription>Status for Job ID: <span className="font-mono text-xs">{activeJob.job_id.replace('zpe_job_','')}</span> ({activeJob.parameters.modelName})</CardDescription>
-            ) : (
-              <CardDescription>No active training job. Start one or select from history.</CardDescription>
-            )}
-          </CardHeader>
-          <CardContent>
-            {activeJob ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Badge variant={
-                    activeJob.status === "running" ? "default" :
-                    activeJob.status === "completed" ? "default" : 
-                    activeJob.status === "failed" || activeJob.status === "stopped" ? "destructive" : "secondary"
-                  }
-                  className={cn("font-semibold",
-                    activeJob.status === "completed" ? "bg-green-500 hover:bg-green-600 text-primary-foreground" : 
-                    activeJob.status === "running" ? "bg-blue-500 hover:bg-blue-600 text-primary-foreground animate-pulse" : ""
-                  )}
-                  >
-                    {activeJob.status.toUpperCase()}
-                  </Badge>
-                  {(activeJob.status === "running" || activeJob.status === "pending") && (
-                    <Button variant="destructive" size="sm" onClick={() => handleStopJob(activeJob.job_id)}>
-                      <StopCircle className="mr-2 h-4 w-4" /> Stop Job
-                    </Button>
-                  )}
-                </div>
-                <Progress value={(activeJob.current_epoch / activeJob.total_epochs) * 100} className="w-full h-3" />
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <MetricDisplay label="Epoch" value={`${activeJob.current_epoch}/${activeJob.total_epochs}`} />
-                  <MetricDisplay label="Accuracy" value={`${activeJob.accuracy.toFixed(2)}%`} />
-                  <MetricDisplay label="Loss" value={`${activeJob.loss.toFixed(4)}`} />
-                  <MetricDisplay label="Avg ZPE Effect" value={`${(activeJob.zpe_effects && activeJob.zpe_effects.length > 0 ? activeJob.zpe_effects.reduce((a,b)=>a+b,0) / activeJob.zpe_effects.length : 0).toFixed(3)}`} />
-                </div>
-                
-                <div className="h-[250px] mt-4 bg-muted/30 p-2 rounded-md">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border) / 0.5)" />
-                      <XAxis dataKey="epoch" name="Epoch" stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                      <YAxis yAxisId="left" name="Accuracy" stroke="hsl(var(--primary))" fontSize={10} domain={[70,100]} tickFormatter={(val) => `${val}%`}/>
-                      <YAxis yAxisId="right" name="Loss" orientation="right" stroke="hsl(var(--destructive))" fontSize={10} domain={[0, 'auto']}/>
-                      <Tooltip wrapperClassName="text-xs rounded-md shadow-lg !bg-popover !border-border" labelClassName="font-bold" />
-                      <Legend wrapperStyle={{fontSize: "10px"}}/>
-                      <Line yAxisId="left" type="monotone" dataKey="accuracy" stroke="hsl(var(--primary))" name="Accuracy" dot={false} strokeWidth={2} />
-                      <Line yAxisId="right" type="monotone" dataKey="loss" stroke="hsl(var(--destructive))" name="Loss" dot={false} strokeWidth={2} />
-                      <Line yAxisId="left" type="monotone" dataKey="avg_zpe" stroke="hsl(var(--accent))" name="Avg ZPE" dot={false} strokeDasharray="3 3" strokeWidth={1.5}/>
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-
-                <Label className="text-sm">Training Logs</Label>
-                <ScrollArea className="h-40 w-full rounded-md border p-2 bg-muted/30">
-                  {activeJob.log_messages && activeJob.log_messages.slice().reverse().map((log, index) => (
-                    <p key={index} className="text-xs font-mono text-muted-foreground leading-relaxed">{log}</p>
-                  ))}
-                   {!activeJob.log_messages && <p className="text-xs font-mono text-muted-foreground">No logs yet.</p>}
-                </ScrollArea>
-              </div>
-            ) : (
-              <div className="text-center py-10 text-muted-foreground">
-                <Zap className="mx-auto h-12 w-12 mb-4 opacity-50" />
-                <p>Select a job from history or start a new training session to monitor progress.</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><List className="h-5 w-5 text-primary"/> Training Job History</CardTitle>
-            <CardDescription>View past and ongoing training jobs. Click "View" to load details into the monitor.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoadingJobs && <div className="flex justify-center py-10"><RefreshCw className="h-8 w-8 animate-spin text-primary" /></div>}
-            {!isLoadingJobs && jobsList.length === 0 && (
-                <div className="text-center py-10 text-muted-foreground">
-                    <List className="mx-auto h-12 w-12 mb-4 opacity-50" />
-                    No training jobs found. Start a new one using the configuration panel.
-                </div>
-            )}
-            {!isLoadingJobs && jobsList.length > 0 && (
-              <ScrollArea className="h-[400px]">
-                <Table>
-                  <TableHeader className="sticky top-0 bg-card z-10">
-                    <TableRow>
-                      <TableHead>Job ID</TableHead>
-                      <TableHead>Model Name</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Accuracy</TableHead>
-                      <TableHead>Epochs</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {jobsList.map(job => (
-                      <TableRow key={job.job_id} className={cn("cursor-pointer hover:bg-muted/50", activeJob?.job_id === job.job_id ? "bg-primary/10" : "")} onClick={() => handleViewJobDetails(job.job_id)}>
-                        <TableCell className="font-mono text-xs">{job.job_id.replace('zpe_job_','')}</TableCell>
-                        <TableCell className="font-medium">{job.model_name}</TableCell>
-                        <TableCell>
-                          <Badge variant={
-                            job.status === "running" ? "default" :
-                            job.status === "completed" ? "default" :
-                            job.status === "failed" || job.status === "stopped" ? "destructive" : "secondary"
-                          }
-                          className={cn("font-semibold text-xs", job.status === "completed" ? "bg-green-500 hover:bg-green-600 text-primary-foreground" : job.status === "running" ? "bg-blue-500 hover:bg-blue-600 text-primary-foreground animate-pulse" : "")}
-                          >{job.status}</Badge>
-                        </TableCell>
-                        <TableCell>{job.accuracy > 0 ? `${job.accuracy.toFixed(2)}%` : '-'}</TableCell>
-                        <TableCell>{`${job.current_epoch}/${job.total_epochs}`}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleViewJobDetails(job.job_id); }}>
-                            <ExternalLink className="mr-1 h-3 w-3"/>View Details
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-interface FieldControllerProps<TFieldValues extends FieldValues, TName extends FieldPath<TFieldValues>> {
-  control: Control<TFieldValues>;
+interface FieldControllerProps<TName extends FieldPath<TrainingParameters>> {
+  control: Control<TrainingParameters>;
   name: TName;
   label: string;
   type?: string;
   placeholder?: string;
   min?: string | number;
   step?: string | number;
+ max?: string | number;
 }
 
 const FieldController = <TFieldValues extends FieldValues = TrainingParameters>({
@@ -970,7 +70,8 @@ const FieldController = <TFieldValues extends FieldValues = TrainingParameters>(
   placeholder,
   min,
   step,
-}: FieldControllerProps<TFieldValues, FieldPath<TFieldValues>>) => (
+ max,
+}: FieldControllerProps<FieldPath<TrainingParameters>>) => (
   <div className="space-y-1">
     <Label htmlFor={name as string} className="text-sm">{label}</Label>
     <Controller
@@ -978,30 +79,31 @@ const FieldController = <TFieldValues extends FieldValues = TrainingParameters>(
       control={control}
       render={({ field, fieldState }) => {
         const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-            if (type === 'number') {
-                const value = e.target.value;
-                field.onChange(value === '' ? '' : parseFloat(value));
-            } else {
-                field.onChange(e.target.value);
-            }
+          if (type === 'number') {
+            const value = e.target.value;
+            field.onChange(value === '' ? '' : parseFloat(value));
+          } else {
+            field.onChange(e.target.value);
+          }
         };
         return (
-            <>
-                <Input
-                    {...field}
-                    id={name as string}
-                    type={type}
-                    placeholder={placeholder}
-                    min={min}
-                    step={step}
-                    value={(type === 'number' && (typeof field.value === 'number' && !isNaN(field.value))) ? field.value : (field.value || '')}
-                    onChange={handleChange}
-                    className={cn("h-9 text-sm", fieldState.error ? "border-destructive focus-visible:ring-destructive" : "")}
-                />
-                {fieldState.error && <p className="text-xs text-destructive mt-1">{fieldState.error.message}</p>}
-            </>
+          <>
+            <Input
+              {...field}
+              id={name as string}
+              type={type}
+              placeholder={placeholder}
+              min={min}
+              step={step}
+ max={max}
+              value={(type === 'number' && typeof field.value === 'number' && !isNaN(field.value)) ? field.value : (field.value || '')}
+              onChange={handleChange}
+              className={cn("h-9 text-sm", fieldState.error ? "border-destructive focus-visible:ring-destructive" : "")}
+            />
+            {fieldState.error && <p className="text-xs text-destructive mt-1">{fieldState.error.message}</p>}
+          </>
         );
-    }}
+      }}
     />
   </div>
 );
@@ -1040,4 +142,853 @@ const MetricDisplay = ({ label, value }: { label: string; value: string | number
   </div>
 );
 
-    
+export default function TrainModelPage() {
+  const [activeJob, setActiveJob] = useState<TrainingJob | null>(null);
+  const [jobsList, setJobsList] = useState<TrainingJobSummary[]>([]);
+  const [isLoadingJobs, setIsLoadingJobs] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const isPollingRef = useRef<boolean>(false);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [completedJobsListForAdvisor, setCompletedJobsListForAdvisor] = useState<TrainingJobSummary[]>([]);
+  const [selectedJobIdForMiniAdvisor, setSelectedJobIdForMiniAdvisor] = useState<string>("");
+  const [miniAdvisorObjective, setMiniAdvisorObjective] = useState<string>("Maximize validation accuracy while maintaining ZPE stability and exploring a slight increase in learning rate if previous accuracy was high.");
+  const [miniAdvisorResult, setMiniAdvisorResult] = useState<HSQNNAdvisorOutput | null>(null);
+  const [isLoadingMiniAdvisor, setIsLoadingMiniAdvisor] = useState<boolean>(false);
+  const [miniAdvisorError, setMiniAdvisorError] = useState<string | null>(null);
+  const [selectedPreviousJobDetailsForMiniAdvisor, setSelectedPreviousJobDetailsForMiniAdvisor] = useState<TrainingJob | null>(null);
+  const [isMiniAdvisorLoadingJobs, setIsMiniAdvisorLoadingJobs] = useState(false);
+
+  const defaultFormValues: TrainingParameters = {
+    modelName: "ZPE-QuantumWeaver-V1",
+    totalEpochs: 30,
+    batchSize: 32,
+    learningRate: 0.001,
+    weightDecay: 0.0001,
+    momentumParams: defaultZPEParams.momentum,
+    strengthParams: defaultZPEParams.strength,
+    noiseParams: defaultZPEParams.noise,
+    couplingParams: defaultZPEParams.coupling,
+    quantumCircuitSize: 32,
+    labelSmoothing: 0.1,
+    quantumMode: true,
+    baseConfigId: undefined,
+  };
+
+  const { control, handleSubmit, reset, watch, formState: { errors } } = useForm<TrainingParameters>({
+    resolver: zodResolver(trainingFormSchema),
+    defaultValues: defaultFormValues,
+  });
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+      isPollingRef.current = false;
+      console.log("Polling stopped.");
+    }
+  }, []);
+
+  const fetchJobsList = useCallback(async () => {
+    setIsLoadingJobs(true);
+    try {
+      const response = await fetch(API_BASE_URL + '/jobs?limit=20');
+      if (!response.ok) throw new Error("Failed to fetch jobs list");
+      const data = await response.json();
+      const sortedJobs = (data.jobs || []).sort((a: TrainingJobSummary, b: TrainingJobSummary) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
+      setJobsList(sortedJobs);
+      return sortedJobs;
+    } catch (error: any) {
+      toast({ title: "Error fetching jobs", description: error.message, variant: "destructive" });
+      return [];
+    } finally {
+      setIsLoadingJobs(false);
+    }
+  }, []);
+
+  const pollJobStatus = useCallback(async (jobId: string, isInitialLoad = false) => {
+    if (isPollingRef.current && !isInitialLoad && activeJob?.job_id !== jobId) {
+      console.log(`Polling skipped for job ${jobId.replace('zpe_job_','')}: Another job is being polled or this is not the active job.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch job status for ${jobId}`);
+      }
+      const jobData: TrainingJob = await response.json();
+
+      if (isInitialLoad || activeJob?.job_id === jobId) {
+        setActiveJob(jobData);
+
+        if (jobData.status === "running" || jobData.status === "completed") {
+          const newPoint = {
+            epoch: jobData.current_epoch,
+            accuracy: jobData.accuracy,
+            loss: jobData.loss,
+            avg_zpe: jobData.zpe_effects && jobData.zpe_effects.length > 0 ? jobData.zpe_effects.reduce((a,b)=>a+b,0) / (jobData.zpe_effects.length) : 0
+          };
+          setChartData(prev => {
+            const existingPointIndex = prev.findIndex(p => p.epoch === newPoint.epoch);
+            if (existingPointIndex > -1) {
+              const updatedPrev = [...prev];
+              updatedPrev[existingPointIndex] = newPoint;
+              return updatedPrev;
+            }
+            return [...prev, newPoint].sort((a,b) => a.epoch - b.epoch);
+          });
+        }
+
+        if (jobData.status === "completed" || jobData.status === "failed" || jobData.status === "stopped") {
+          stopPolling();
+          fetchJobsList();
+          toast({ 
+            title: `Job ${jobData.status}`, 
+            description: `Job ${jobId.replace('zpe_job_','')} (${jobData.parameters.modelName}) finished with status: ${jobData.status}. Accuracy: ${jobData.accuracy.toFixed(2)}%` 
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error("Error polling job status:", error);
+      toast({ title: "Error polling job status", description: error.message, variant: "destructive" });
+      stopPolling();
+    }
+  }, [activeJob?.job_id, fetchJobsList, stopPolling]);
+
+  const handleViewJobDetails = useCallback(async (jobId: string) => {
+    stopPolling();
+    setChartData([]);
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
+      if (!response.ok) throw new Error("Failed to fetch job details");
+      const data: TrainingJob = await response.json();
+      setActiveJob(data);
+
+      if (data.status !== "running" && data.status !== "pending" && data.log_messages) {
+        const parsedChartData = data.log_messages
+          .map(log => {
+            const epochMatch = log.match(/E(\d+)\s+B\d+\/\d+\s+L:\s*([\d.]+)/);
+            const endEpochMatch = log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: ([\d.]+)%, ValL: ([\d.]+)/);
+            const zpeMatch = log.match(/ZPE: \[([,\d\s.]+)\]/);
+
+            let epochData: any = {};
+
+            if (endEpochMatch) {
+              epochData.epoch = parseInt(endEpochMatch[1]);
+              epochData.accuracy = parseFloat(endEpochMatch[2]);
+              epochData.loss = parseFloat(endEpochMatch[3]);
+            } else if (epochMatch) {
+              epochData.epoch = parseInt(epochMatch[1]);
+              epochData.loss = parseFloat(epochMatch[2]);
+            }
+
+            if (zpeMatch && epochData.epoch) {
+              const zpeValues = zpeMatch[1].split(',').map(s => parseFloat(s.trim()));
+              epochData.avg_zpe = zpeValues.reduce((a, b) => a + b, 0) / zpeValues.length;
+            }
+
+            return epochData.epoch ? epochData : null;
+          })
+          .filter(Boolean)
+          .reduce((acc: any[], current: any) => {
+            const existing = acc.find(item => item.epoch === current.epoch);
+            if (existing) {
+              Object.assign(existing, current);
+            } else {
+              acc.push(current);
+            }
+            return acc;
+          }, [])
+          .sort((a,b) => a!.epoch - b!.epoch);
+
+        if (parsedChartData.length > 0) {
+          setChartData(parsedChartData);
+        } else if (data.status === "completed" || data.status === "stopped") {
+          setChartData([{
+            epoch: data.current_epoch,
+            accuracy: data.accuracy,
+            loss: data.loss,
+            avg_zpe: data.zpe_effects && data.zpe_effects.length > 0 ? data.zpe_effects.reduce((a,b)=>a+b,0) / data.zpe_effects.length : 0
+          }]);
+        }
+      }
+
+      if (data.status === "running" || data.status === "pending") {
+        if (!isPollingRef.current) {
+          pollingRef.current = setInterval(() => pollJobStatus(jobId), 2000);
+          isPollingRef.current = true;
+          console.log(`Started polling for job ${jobId}`);
+        }
+        await pollJobStatus(jobId, true);
+      } else {
+        stopPolling();
+      }
+    } catch (error: any) {
+      toast({ title: "Error fetching job details", description: error.message, variant: "destructive"});
+      setActiveJob(null);
+      stopPolling();
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [pollJobStatus, stopPolling]);
+
+  const fetchCompletedJobsForMiniAdvisor = useCallback(async () => {
+    setIsMiniAdvisorLoadingJobs(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/jobs?limit=50`);
+      if (!response.ok) throw new Error("Failed to fetch completed jobs list for advisor");
+      const data = await response.json();
+      const completedJobs = (data.jobs || [])
+        .filter((job: TrainingJobSummary) => job.status === "completed")
+        .sort((a: TrainingJobSummary, b: TrainingJobSummary) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
+      setCompletedJobsListForAdvisor(completedJobs);
+      if (completedJobs.length > 0 && !selectedJobIdForMiniAdvisor) {
+        setSelectedJobIdForMiniAdvisor(completedJobs[0].job_id);
+      }
+    } catch (error: any) {
+      toast({ title: "Error fetching completed jobs", description: error.message, variant: "destructive" });
+    } finally {
+      setIsMiniAdvisorLoadingJobs(false);
+    }
+  }, [selectedJobIdForMiniAdvisor]);
+
+  useEffect(() => {
+    fetchCompletedJobsForMiniAdvisor();
+  }, [fetchCompletedJobsForMiniAdvisor]);
+
+  useEffect(() => {
+    if (selectedJobIdForMiniAdvisor) {
+      const fetchDetails = async () => {
+        setIsLoadingMiniAdvisor(true);
+        setMiniAdvisorResult(null);
+        setMiniAdvisorError(null);
+        try {
+          const response = await fetch(`${API_BASE_URL}/status/${selectedJobIdForMiniAdvisor}`);
+          if (!response.ok) throw new Error(`Failed to fetch details for job ${selectedJobIdForMiniAdvisor}`);
+          const data: TrainingJob = await response.json();
+          if (data.status !== 'completed') {
+            setSelectedPreviousJobDetailsForMiniAdvisor(null);
+            throw new Error(`Job ${selectedJobIdForMiniAdvisor} is not completed. Current status: ${data.status}`);
+          }
+          setSelectedPreviousJobDetailsForMiniAdvisor(data);
+        } catch (e: any) {
+          setSelectedPreviousJobDetailsForMiniAdvisor(null);
+          setMiniAdvisorError("Failed to fetch selected job details for advisor: " + e.message);
+          toast({ title: "Error fetching job details", description: e.message, variant: "destructive" });
+        } finally {
+          setIsLoadingMiniAdvisor(false);
+        }
+      };
+      fetchDetails();
+    } else {
+      setSelectedPreviousJobDetailsForMiniAdvisor(null);
+    }
+  }, [selectedJobIdForMiniAdvisor]);
+
+  const handleGetMiniAdvice = async () => {
+    if (!selectedPreviousJobDetailsForMiniAdvisor) {
+      toast({ title: "Error", description: "No previous job selected for HNN advice.", variant: "destructive" });
+      return;
+    }
+    if (selectedPreviousJobDetailsForMiniAdvisor.status !== 'completed') {
+      toast({ title: "Invalid Job", description: "Please select a 'completed' job for HNN advice.", variant: "destructive" });
+      return;
+    }
+
+    setIsLoadingMiniAdvisor(true);
+    setMiniAdvisorError(null);
+    setMiniAdvisorResult(null);
+
+    let validatedPreviousParams: TrainingParameters;
+    try {
+      const paramsToValidate = {
+        ...defaultFormValues,
+        ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
+      };
+      validatedPreviousParams = trainingFormSchema.parse(paramsToValidate);
+    } catch (validationError: any) {
+      console.error("Validation error for previousTrainingParameters (mini advisor):", validationError);
+      setMiniAdvisorError("Previous job parameters are not in the expected format. Check console for details. Error: " + validationError.message);
+      toast({ title: "Parameter Mismatch", description: "Previous job parameters format error. " + validationError.message, variant: "destructive" });
+      setIsLoadingMiniAdvisor(false);
+      return;
+    }
+
+    const inputForAI: HSQNNAdvisorInput = {
+      previousJobId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
+      previousZpeEffects: selectedPreviousJobDetailsForMiniAdvisor.zpe_effects || Array(6).fill(0),
+      previousTrainingParameters: validatedPreviousParams,
+      hnnObjective: miniAdvisorObjective,
+    };
+
+    try {
+      const output = await adviseHSQNNParameters(inputForAI);
+      setMiniAdvisorResult(output);
+      toast({ title: "HNN Advice Generated", description: "AI has provided suggestions." });
+    } catch (e: any) {
+      setMiniAdvisorError("AI HNN advice generation failed: " + e.message);
+      toast({ title: "HNN Advice Failed", description: e.message, variant: "destructive" });
+    } finally {
+      setIsLoadingMiniAdvisor(false);
+    }
+  };
+
+  const handleApplyMiniAdvice = () => {
+    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
+      toast({ title: "No advice to apply", variant: "destructive" });
+      return;
+    }
+
+    const currentFormValues = watch();
+    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
+
+    const newFormValues: TrainingParameters = {
+      ...defaultFormValues,
+      ...currentFormValues,
+      ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
+      ...suggested,
+    };
+
+    newFormValues.modelName = suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_adv_${Date.now().toString().slice(-3)}`;
+    newFormValues.baseConfigId = selectedPreviousJobDetailsForMiniAdvisor.job_id;
+
+    const validationResult = trainingFormSchema.safeParse(newFormValues);
+
+    if (validationResult.success) {
+      reset(validationResult.data);
+      toast({ title: "Parameters Applied", description: "Advisor suggestions applied to the form." });
+    } else {
+      console.error("Validation error applying HNN mini-advice:", validationResult.error.flatten().fieldErrors);
+      let errorSummary = "Error applying advice: ";
+      Object.entries(validationResult.error.flatten().fieldErrors).forEach(([key, messages]) => {
+        if (messages) errorSummary += `${key}: ${messages.join(', ')} `;
+      });
+      toast({ title: "Validation Error on Apply", description: errorSummary, variant: "destructive" });
+    }
+  };
+
+  const handleSaveSuggestedParameters = async () => {
+    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
+      toast({ title: "Error", description: "No suggested parameters to save.", variant: "destructive" });
+      return;
+    }
+
+    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
+    const configToSave = {
+      name: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
+      parameters: {
+        ...defaultFormValues,
+        ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
+        ...suggested,
+        baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
+        modelName: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
+      },
+      date_created: new Date().toISOString().split('T')[0],
+      accuracy: 0,
+      loss: 0,
+      use_quantum_noise: suggested.quantumMode !== undefined ? suggested.quantumMode : selectedPreviousJobDetailsForMiniAdvisor.parameters.quantumMode,
+    };
+
+    configToSave.parameters = {
+      totalEpochs: configToSave.parameters.totalEpochs,
+      batchSize: configToSave.parameters.batchSize,
+      learningRate: configToSave.parameters.learningRate,
+      weightDecay: configToSave.parameters.weightDecay,
+      momentumParams: configToSave.parameters.momentumParams,
+      strengthParams: configToSave.parameters.strengthParams,
+      noiseParams: configToSave.parameters.noiseParams,
+      couplingParams: configToSave.parameters.couplingParams || defaultZPEParams.coupling,
+      quantumCircuitSize: configToSave.parameters.quantumCircuitSize,
+      labelSmoothing: configToSave.parameters.labelSmoothing,
+      quantumMode: configToSave.parameters.quantumMode,
+      modelName: configToSave.parameters.modelName,
+      baseConfigId: configToSave.parameters.baseConfigId,
+    };
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/configs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configToSave),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to save configuration: ${response.status} ${response.statusText}. ${errorData.detail || ''}`);
+      }
+      const saved = await response.json();
+      toast({ title: "Configuration Saved", description: `Config "${configToSave.name}" (ID: ${saved.config_id.slice(-6)}) saved.` });
+    } catch (error: any) {
+      console.error("Error saving suggested parameters:", error);
+      toast({ title: "Save Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDownloadSuggestedParameters = () => {
+    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
+      toast({ title: "Error", description: "No suggested parameters to download.", variant: "destructive" });
+      return;
+    }
+    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
+    const filename = `${suggested.modelName || `advised_params_${Date.now().toString().slice(-4)}`}.json`;
+    const jsonStr = JSON.stringify({
+      ...defaultFormValues,
+      ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
+      ...suggested,
+      modelName: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
+      baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
+    }, null, 2);
+
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({ title: "Parameters Downloaded", description: `Saved as ${filename}` });
+  };
+
+  const onSubmit = async (data: TrainingParameters) => {
+    setIsSubmitting(true);
+    setChartData([]);
+    stopPolling();
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/train`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error(`Failed to start training job. Server responded with ${response.status}`);
+      const result = await response.json();
+      if (!result.job_id) throw new Error("Backend did not return a job_id.");
+
+      const newJob: TrainingJob = {
+        job_id: result.job_id,
+        status: "pending",
+        current_epoch: 0,
+        total_epochs: data.totalEpochs,
+        accuracy: 0,
+        loss: 0,
+        zpe_effects: Array(6).fill(0),
+        log_messages: [`Job ${result.job_id} submitted.`],
+        parameters: data,
+      };
+      setActiveJob(newJob);
+
+      if (!isPollingRef.current) {
+        pollingRef.current = setInterval(() => pollJobStatus(result.job_id), 2000);
+        isPollingRef.current = true;
+        console.log(`Started polling for new job ${result.job_id}`);
+      }
+      fetchJobsList();
+      toast({ title: "Training Started", description: `Job ID: ${result.job_id.replace('zpe_job_','')}` });
+    } catch (error: any) {
+      toast({ title: "Error starting training", description: error.message, variant: "destructive" });
+      setActiveJob(null);
+      stopPolling();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleStopJob = async (jobId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/stop/${jobId}`, { method: "POST" });
+      if (!response.ok) throw new Error("Failed to stop job");
+      toast({ title: "Stop Request Sent", description: `Requested stop for job ${jobId.replace('zpe_job_','')}` });
+    } catch (error: any) {
+      toast({ title: "Error stopping job", description: error.message, variant: "destructive" });
+    }
+  };
+
+  useEffect(() => {
+    const initializePage = async () => {
+      console.log("useEffect: Starting initialization");
+
+      try {
+        console.log("useEffect: Fetching jobs list...");
+        const recentJobs = await fetchJobsList();
+        console.log(`useEffect: Fetched ${recentJobs.length} jobs.`);
+
+        const prefillJobId = searchParams.get("prefill");
+
+        if (prefillJobId) {
+          console.log(`useEffect: Found prefill job ID: ${prefillJobId}. Prioritizing pre-filling.`);
+          try {
+            const jobToPrefillResponse = await fetch(`${API_BASE_URL}/status/${prefillJobId}`);
+            if (!jobToPrefillResponse.ok) {
+              throw new Error(`Failed to fetch job details for prefill ID: ${prefillJobId}`);
+            }
+            const jobToPrefill: TrainingJob = await jobToPrefillResponse.json();
+
+            const paramsWithNewNameAndBaseId = {
+              ...defaultFormValues,
+              ...jobToPrefill.parameters,
+              modelName: `${jobToPrefill.parameters.modelName}_retrain_${Date.now().toString().slice(-4)}`,
+              baseConfigId: prefillJobId,
+            };
+
+            const validatedParams = trainingFormSchema.safeParse(paramsWithNewNameAndBaseId);
+            if (validatedParams.success) {
+              reset(validatedParams.data);
+              toast({ title: "Form Pre-filled", description: `Loaded parameters from job ${jobToPrefill.parameters.modelName}. Model name updated.` });
+              console.log(`useEffect: Successfully pre-filled form from job ${prefillJobId}`);
+            } else {
+              console.error("useEffect: Job prefill validation error:", validatedParams.error);
+              let errorMessages = "Validation errors: ";
+              validatedParams.error.errors.forEach(err => {
+                errorMessages += `${err.path.join('.')}: ${err.message}. `;
+              });
+              toast({ title: "Prefill Validation Error", description: `Parameters from job ${prefillJobId.slice(-6)} are not valid. ${errorMessages}`, variant: "destructive" });
+              reset({...defaultFormValues, ...paramsWithNewNameAndBaseId});
+            }
+
+            if (jobToPrefill.status === "running" || jobToPrefill.status === "pending") {
+              await handleViewJobDetails(prefillJobId);
+              console.log(`useEffect: Loaded details for prefill job ${prefillJobId} into monitor (running/pending).`);
+            } else {
+              setActiveJob(jobToPrefill);
+              setChartData([{
+                epoch: jobToPrefill.current_epoch,
+                accuracy: jobToPrefill.accuracy,
+                loss: jobToPrefill.loss,
+                avg_zpe: jobToPrefill.zpe_effects && jobToPrefill.zpe_effects.length > 0 ? jobToPrefill.zpe_effects.reduce((a,b)=>a+b,0) / jobToPrefill.zpe_effects.length : 0
+              }]);
+              console.log(`useEffect: Loaded details for prefill job ${prefillJobId} into monitor (completed/failed/stopped).`);
+            }
+          } catch (e: any) {
+            console.error(`useEffect: Error handling prefill job ${prefillJobId}:`, e);
+            toast({ title: "Prefill Failed", description: e.message, variant: "destructive" });
+          }
+        } else {
+          console.log("useEffect: No prefill job ID found. Checking for active jobs.");
+          const runningOrPendingJob = recentJobs.find((j: TrainingJobSummary) => j.status === 'running' || j.status === 'pending');
+          if (runningOrPendingJob) {
+            console.log(`useEffect: Found active job: ${runningOrPendingJob.job_id}. Loading details.`);
+            toast({ title: "Active Job Found", description: `Monitoring job ${runningOrPendingJob.job_id.slice(-6)} (${runningOrPendingJob.model_name}).` });
+            await handleViewJobDetails(runningOrPendingJob.job_id);
+          } else {
+            console.log("useEffect: No active job found.");
+          }
+        }
+      } catch (error: any) {
+        console.error("useEffect: Error during initialization:", error);
+        toast({ title: "Initialization Error", description: error.message, variant: "destructive" });
+      } finally {
+        console.log("useEffect: Initialization complete.");
+      }
+    };
+
+    initializePage();
+
+    return () => {
+      console.log("useEffect cleanup: Clearing polling interval.");
+      stopPolling();
+    };
+  }, [searchParams, fetchJobsList, handleViewJobDetails, reset, stopPolling]);
+
+  const renderParamArrayFields = (paramName: "momentumParams" | "strengthParams" | "noiseParams" | "couplingParams", labelPrefix: string, Icon: React.ElementType) => (
+    <div className="space-y-2">
+      <Label className="text-sm flex items-center gap-2"><Icon className="h-4 w-4 text-primary" /> {labelPrefix} <span className="text-xs text-muted-foreground">(6 layers)</span></Label>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {(watch(paramName) || Array(6).fill(0)).map((_, index) => (
+          <FieldController
+            key={`${paramName}.${index}`}
+            control={control}
+            name={`${paramName}.${index}` as const}
+            label={`Layer ${index + 1}`}
+            type="number"
+            min="0"
+            max="1"
+            step="0.01"
+          />
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="container mx-auto py-6 px-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Training Configuration */}
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-xl"><Zap className="h-6 w-6 text-primary" /> Train Configuration</CardTitle>
+            <CardDescription>Configure your ZPE-enhanced neural network training job.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+              <Tabs defaultValue="general" className="w-full">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="general">General</TabsTrigger>
+                  <TabsTrigger value="zpe">ZPE</TabsTrigger>
+                  <TabsTrigger value="quantum">Quantum</TabsTrigger>
+                </TabsList>
+                <TabsContent value="general">
+                  <div className="grid gap-4">
+                    <FieldController control={control} name="modelName" label="Model Name" placeholder="e.g., ZPE-QuantumWeaver-V1" />
+                    <div className="grid grid-cols-2 gap-4">
+                      <FieldController control={control} name="totalEpochs" label="Total Epochs" type="number" min="1" max="200" />
+                      <FieldController control={control} name="batchSize" label="Batch Size" type="number" min="8" max="256" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <FieldController control={control} name="learningRate" label="Learning Rate" type="number" min="0.00001" max="0.1" step="0.00001" />
+                      <FieldController control={control} name="weightDecay" label="Weight Decay" type="number" min="0" max="0.1" step="0.0001" />
+                    </div>
+                    <FieldController control={control} name="baseConfigId" label="Base Config ID (Optional)" placeholder="e.g., config_123456" />
+                  </div>
+                </TabsContent>
+                <TabsContent value="zpe">
+                  <div className="space-y-6">
+                    {renderParamArrayFields("momentumParams", "Momentum", Waves)}
+                    {renderParamArrayFields("strengthParams", "Strength", SlidersHorizontal)}
+                    {renderParamArrayFields("noiseParams", "Noise", Atom)}
+                    {renderParamArrayFields("couplingParams", "Coupling", BrainCircuit)}
+                  </div>
+                </TabsContent>
+                <TabsContent value="quantum">
+                  <div className="space-y-4">
+                    <FieldController control={control} name="quantumCircuitSize" label="Quantum Circuit Size" type="number" min="4" max="64" />
+                    <FieldController control={control} name="labelSmoothing" label="Label Smoothing" type="number" min="0" max="0.5" step="0.01" />
+                    <FieldControllerSwitch control={control} name="quantumMode" label="Quantum Mode" />
+                  </div>
+                </TabsContent>
+              </Tabs>
+              {/* HS-QNN Mini Advisor */}
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg"><Brain className="h-5 w-5 text-primary" /> HS-QNN Mini Advisor</CardTitle>
+                  <CardDescription>Get AI-driven suggestions for your next training step.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="selectedJobIdForMiniAdvisor">Select Previous Job</Label>
+                    <Select
+                      value={selectedJobIdForMiniAdvisor}
+                      onValueChange={setSelectedJobIdForMiniAdvisor}
+                      disabled={isMiniAdvisorLoadingJobs || isLoadingMiniAdvisor}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select a completed job..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {completedJobsListForAdvisor.map((job) => (
+                          <SelectItem key={job.job_id} value={job.job_id}>
+                            {job.job_id.replace('zpe_job_', '')} ({job.model_name}, Acc: {job.accuracy.toFixed(2)}%)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="miniAdvisorObjective">Advisor Objective</Label>
+                    <Textarea
+                      id="miniAdvisorObjective"
+                      value={miniAdvisorObjective}
+                      onChange={(e) => setMiniAdvisorObjective(e.target.value)}
+                      placeholder="e.g., Maximize validation accuracy while maintaining ZPE stability..."
+                      className="min-h-[80px] w-full"
+                    />
+                  </div>
+                  {selectedPreviousJobDetailsForMiniAdvisor && (
+                    <div className="space-y-2">
+                      <Label>Selected Job Details</Label>
+                      <pre className="p-2 bg-muted rounded-md text-sm overflow-auto max-h-32">
+                        {JSON.stringify(selectedPreviousJobDetailsForMiniAdvisor.parameters, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  {miniAdvisorError && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>Error</AlertTitle>
+                      <AlertDescription>{miniAdvisorError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {miniAdvisorResult && (
+                    <div className="space-y-2">
+                      <Label>Suggested Parameters</Label>
+                      <pre className="p-2 bg-muted rounded-md text-sm overflow-auto max-h-32">
+                        {JSON.stringify(miniAdvisorResult.suggestedNextTrainingParameters, null, 2)}
+                      </pre>
+                      <div className="flex gap-2">
+                        <Button onClick={handleApplyMiniAdvice} disabled={isLoadingMiniAdvisor}>
+                          <Wand2 className="mr-2 h-4 w-4" /> Apply to Form
+                        </Button>
+                        <Button variant="outline" onClick={handleSaveSuggestedParameters} disabled={isLoadingMiniAdvisor || isSubmitting}>
+                          <Save className="mr-2 h-4 w-4" /> Save Config
+                        </Button>
+                        <Button variant="outline" onClick={handleDownloadSuggestedParameters}>
+                          <Download className="mr-2 h-4 w-4" /> Download JSON
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+                <CardFooter>
+                  <Button onClick={handleGetMiniAdvice} disabled={isLoadingMiniAdvisor || !selectedJobIdForMiniAdvisor || isSubmitting}>
+                    {isLoadingMiniAdvisor ? "Generating Advice..." : "Get HNN Advice"}
+                  </Button>
+                </CardFooter>
+              </Card>
+              <CardFooter className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => reset(defaultFormValues)} disabled={isSubmitting}>
+                  Reset
+                </Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Submitting..." : "Start Training"}
+                </Button>
+              </CardFooter>
+            </form>
+          </CardContent>
+        </Card>
+
+        {/* Training Monitor */}
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-xl"><List className="h-6 w-6 text-primary" /> Training Monitor</CardTitle>
+            <CardDescription>Status for Job ID: {activeJob?.job_id ? activeJob.job_id.replace('zpe_job_', '') : 'None'}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {activeJob ? (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <Label>Status</Label>
+                  <Badge
+                    variant={
+                      activeJob.status === "running"
+                        ? "default"
+                        : activeJob.status === "completed"
+                        ? "default"
+                        : "destructive"
+                    }
+                    className={activeJob.status === "completed" ? "bg-green-500 text-white" : ""}
+                  >
+                    {activeJob.status.toUpperCase()}
+                  </Badge>
+                  {activeJob.status === "running" && (
+                    <Button variant="destructive" onClick={() => handleStopJob(activeJob.job_id)} disabled={isSubmitting}>
+                      <StopCircle className="mr-2 h-4 w-4" /> Stop Job
+                    </Button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <MetricDisplay label="Epoch" value={`${activeJob.current_epoch}/${activeJob.total_epochs}`} />
+                  <MetricDisplay label="Accuracy" value={`${activeJob.accuracy.toFixed(2)}%`} />
+                  <MetricDisplay label="Loss" value={activeJob.loss.toFixed(4)} />
+                  <MetricDisplay label="Avg ZPE" value={(activeJob.zpe_effects && activeJob.zpe_effects.length > 0 ? activeJob.zpe_effects.reduce((a, b) => a + b, 0) / activeJob.zpe_effects.length : 0).toFixed(2)} />
+                </div>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="epoch" />
+                      <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
+                      <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
+                      <Tooltip />
+                      <Legend />
+                      <Line yAxisId="left" type="monotone" dataKey="accuracy" name="Accuracy (%)" stroke="#8884d8" activeDot={{ r: 8 }} />
+                      <Line yAxisId="left" type="monotone" dataKey="loss" name="Loss" stroke="#ff7300" />
+                      <Line yAxisId="right" type="monotone" dataKey="avg_zpe" name="Avg ZPE" stroke="#82ca9d" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <ScrollArea className="h-[200px] w-full rounded-md border">
+                  <div className="p-4">
+                    <h4 className="mb-4 text-sm font-medium leading-none">Training Logs</h4>
+                    {activeJob.log_messages.map((msg, idx) => (
+                      <p key={idx} className="text-sm text-muted-foreground whitespace-pre-wrap">{msg}</p>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            ) : (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>No Active Job</AlertTitle>
+                <AlertDescription>Select a job from the history or start a new training job.</AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Job History */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl"><List className="h-6 w-6 text-primary" /> Job History</CardTitle>
+          <CardDescription>View and manage past and ongoing training jobs.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex justify-end mb-4">
+            <Button variant="outline" onClick={fetchJobsList} disabled={isLoadingJobs}>
+              <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[100px]">Job ID</TableHead>
+                  <TableHead>Model Name</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Epoch</TableHead>
+                  <TableHead>Accuracy</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {jobsList.map((job) => (
+                  <TableRow key={job.job_id}>
+                    <TableCell className="font-medium">{job.job_id.replace('zpe_job_', '').slice(-6)}</TableCell>
+                    <TableCell>{job.model_name}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          job.status === "running"
+                            ? "default"
+                            : job.status === "completed"
+                            ? "default"
+                            : "destructive"
+                        }
+                        className={job.status === "completed" ? "bg-green-500 text-white" : ""}
+                      >
+                        {job.status.toUpperCase()}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{job.current_epoch}/{job.total_epochs || 0}</TableCell>
+                    <TableCell>{job.accuracy.toFixed(2)}%</TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleViewJobDetails(job.job_id)}
+                        disabled={isSubmitting}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        <span className="sr-only">View Details</span>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

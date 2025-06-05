@@ -1,5 +1,6 @@
+
 "use client";
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Card, 
   CardContent, 
@@ -17,10 +18,20 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { Skeleton } from "@/components/ui/skeleton"; // Import Skeleton
+
+interface PerformanceEpochData {
+  epoch: number;
+  train_acc: number;
+  val_acc: number;
+  train_loss: number;
+  val_loss: number;
+  zpe_effect: number;
+}
 
 export default function LatestPerformance() {
-  const generatePerformanceData = () => {
-    const result = [];
+  const generatePerformanceData = (): PerformanceEpochData[] => {
+    const result: PerformanceEpochData[] = [];
     for (let epoch = 1; epoch <= 6; epoch++) {
       result.push({
         epoch,
@@ -34,8 +45,53 @@ export default function LatestPerformance() {
     return result;
   };
 
-  const performanceData = generatePerformanceData();
-  const lastEpoch = performanceData[performanceData.length - 1];
+  const [performanceData, setPerformanceData] = useState<PerformanceEpochData[]>([]);
+  
+  useEffect(() => {
+    setPerformanceData(generatePerformanceData());
+  }, []);
+
+  const lastEpoch = performanceData.length > 0 ? performanceData[performanceData.length - 1] : null;
+
+  if (performanceData.length === 0 || !lastEpoch) {
+    return (
+      <div className="grid gap-4 md:grid-cols-5">
+        <Card className="md:col-span-3 bg-card/80 backdrop-blur-sm">
+          <CardHeader>
+            <Skeleton className="h-6 w-3/4" />
+            <Skeleton className="h-4 w-1/2" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-96 w-full" />
+          </CardContent>
+        </Card>
+        <Card className="md:col-span-2 bg-card/80 backdrop-blur-sm">
+          <CardHeader>
+            <Skeleton className="h-6 w-3/4" />
+            <Skeleton className="h-4 w-1/2" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <div className="pt-4">
+              <Skeleton className="h-4 w-1/3 mb-2" />
+              <div className="grid grid-cols-6 gap-2">
+                {Array(6).fill(0).map((_, i) => (
+                  <div key={i} className="text-center">
+                    <Skeleton className="w-full h-2 mb-1" />
+                    <Skeleton className="h-3 w-1/2 mx-auto" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-4 md:grid-cols-5">
@@ -52,8 +108,8 @@ export default function LatestPerformance() {
               <LineChart
                 data={performanceData.map(p => ({
                   name: `Epoch ${p.epoch}`,
-                  "Train Acc": p.train_acc,
-                  "Val Acc": p.val_acc
+                  "Train Acc": parseFloat(p.train_acc.toFixed(2)),
+                  "Val Acc": parseFloat(p.val_acc.toFixed(2))
                 }))}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border)/0.5)" />
@@ -130,7 +186,7 @@ export default function LatestPerformance() {
             <div className="pt-4">
               <h3 className="text-sm font-medium mb-2 text-muted-foreground">ZPE Effects by Layer (Conceptual)</h3>
               <div className="grid grid-cols-6 gap-2">
-                {[0.12, 0.18, 0.24, 0.35, 0.11, 0.09].map((value, i) => (
+                {[0.12, 0.18, 0.24, 0.35, 0.11, 0.09].map((value, i) => ( // Assuming static for now
                   <div key={i} className="text-center">
                     <div className="w-full bg-muted rounded-full h-2 mb-1">
                       <div
@@ -161,3 +217,4 @@ export default function LatestPerformance() {
     </div>
   );
 }
+
