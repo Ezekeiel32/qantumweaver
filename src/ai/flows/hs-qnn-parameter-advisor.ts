@@ -7,8 +7,8 @@
  * - HSQNNAdvisorOutput - The return type for the adviseHSQNNParameters function.
  */
 
-import {z} from 'genkit';
-import {ai} from '../genkit';
+import { z } from 'genkit';
+import { ai } from '../genkit';
 
 // Define the Zod schema for TrainingParameters locally for the flow if not easily importable
 const TrainingParametersSchemaInternal = z.object({
@@ -29,8 +29,12 @@ const TrainingParametersSchemaInternal = z.object({
 
 const HSQNNAdvisorInputSchema = z.object({
   previousJobId: z.string().describe("The ID of the completed job being analyzed."),
-  previousZpeEffects: z.array(z.number()).length(6).describe("The final ZPE effects (array of 6 numbers, e.g., [0.199, 0.011, ...]) from the previous job. These values typically range from 0.0 to 0.2, but can vary."),
+  previousJobZpeHistory: z.array(z.object({
+    epoch: z.number().describe("The epoch number."),
+    zpe_effects: z.array(z.number()).length(6).describe("The ZPE effects for the 6 layers at this epoch."),
+  })).optional().describe("Historical ZPE effects for each layer across training epochs from the previous job."),
   previousTrainingParameters: TrainingParametersSchemaInternal.describe("The full set of training parameters used for the previous job."),
+  previousJobZpeHistoryString: z.string().optional().describe("Historical ZPE effects for each layer across training epochs from the previous job, formatted as a string."),
   hnnObjective: z.string().min(10).describe("The user's objective for the next HNN training step. E.g., 'Maximize accuracy while keeping ZPE effects in the 0.05-0.15 range', 'Aggressively explore higher ZPE magnitudes for layer 3', 'Stabilize overall ZPE variance and slightly increase learning rate if accuracy was high'.")
 });
 export type HSQNNAdvisorInput = z.infer<typeof HSQNNAdvisorInputSchema>;
@@ -61,16 +65,23 @@ export async function adviseHSQNNParameters(input: HSQNNAdvisorInput): Promise<H
 
 const prompt = ai.definePrompt({
   name: 'hsQnnParameterAdvisorPrompt',
-  output: {schema: HSQNNAdvisorOutputSchema},
-  prompt: `You are an expert AI Quantum Neural Network Engineer Assistant specializing in Zero-Point Energy (ZPE) enhanced Quantum Neural Networks and their sequential training in a Hilbert Space Quantum Neural Network (HS-QNN) framework.
+  output: { schema: HSQNNAdvisorOutputSchema },
+  prompt: `You are an expert AI Quantum Neural Network Engineer Assistant specializing in Zero-Point Energy (ZPE) enhanced Quantum Neural Networks and their sequential training in a Hilbert Space Quantum Neural Network (HS-QNN
 
-The user has completed a training job and wants advice on parameters for the *next* job in an HNN sequence.
-Your goal is to analyze the ZPE effects and parameters of the previous job, consider the user\'s stated HNN objective, and suggest a new set of training parameters.
+) framework.
 
-Previous Job Details:
-- Job ID: {{{previousJobId}}}
-- Final ZPE Effects (6 layers): {{{previousZpeEffects}}} (These values typically range from 0.0 to 0.2, indicating the average deviation of ZPE flow from 1.0 for each layer. Higher values mean stronger ZPE effect/perturbation for that layer.)
-- Training Parameters Used:
+The user has completed a training job and wants advice on parameters for the next job in an HNN sequence.
+Your goal is to analyze the ZPE effects and parameters of the previous job, consider the user's stated HNN objective, and suggest a new set of training parameters.
+
+**Previous Job Details:**
+- **Job ID**: {{{previousJobId}}}
+- **ZPE History across Epochs** (epoch and 6 layers of ZPE effects): {{{previousJobZpeHistory}}}
+  - These values typically range from 0.0 to 0.2, indicating the average deviation of ZPE flow from 1.0 for each layer at a specific epoch. Higher values mean stronger ZPE effect/perturbation for that layer at that time.#### **CRITICAL DATA: ZPE HISTORY STRING - YOU MUST PARSE AND USE THIS!** ####
+- **ZPE History String** (You **MUST** Carefully parse this string): **{{{previousJobZpeHistoryString}}}**
+  - For each epoch listed in the string, note the 6 ZPE values.
+  - Analyze how these values change from epoch to epoch, identifying any increasing, decreasing, or stabilizing trends.
+  - Pay particular attention to the ZPE values in the last listed epoch. This string contains the full historical data you need to analyze.
+- **Training Parameters Used**:
   - Model Name: {{{previousTrainingParameters.modelName}}}
   - Total Epochs: {{{previousTrainingParameters.totalEpochs}}}
   - Batch Size: {{{previousTrainingParameters.batchSize}}}
@@ -85,19 +96,19 @@ Previous Job Details:
   - Label Smoothing: {{{previousTrainingParameters.labelSmoothing}}}
   - Base Config ID (if resumed): {{{previousTrainingParameters.baseConfigId}}}
 
-User\'s Objective for the Next HNN Step:
-"{{{hnnObjective}}}"
+**User's Objective for the Next HNN Step:**
+{{{hnnObjective}}}
 
-Your Task:
-1. Analyze: Briefly interpret the previousZpeEffects. Are they high, low, varied? How might they relate to the previousTrainingParameters and the hnnObjective?
-2. Suggest Parameters: Based on your analysis of the previous ZPE effects (especially noting high/low values for each layer), the previous training parameters (including how previous \`couplingParams\` might have influenced ZPE effects), and the hnnObjective, suggest a *full* set of 'suggestedNextTrainingParameters'. Pay close attention to the interplay between \`couplingParams\` and other ZPE parameters (\`momentumParams\`, \`strengthParams\`, \`noiseParams\`) and how they collectively influence ZPE effects.
-   You *must* provide values for *all* parameters listed in the \`suggestedNextTrainingParameters\` object, even if you recommend keeping them the same as the previous job.
+**Your Task:**
+1. **Analyze**: **Parse the provided previousJobZpeHistoryString to understand the ZPE history.** This string is the definitive source of epoch-wise ZPE data. How did the ZPE effects evolve across epochs for each layer? Note trends, stability, and the final ZPE effects (the last entry in the history). How might these relate to the previousTrainingParameters and the hnnObjective?
+2. **Suggest Parameters**: Based on your analysis of the previous ZPE effects (especially noting high/low values for each layer), the previous training parameters (including how previous couplingParams might have influenced ZPE effects), and the hnnObjective, suggest a full set of suggestedNextTrainingParameters. Pay close attention to the interplay between couplingParams and other ZPE parameters (momentumParams, strengthParams, noiseParams) and how they collectively influence ZPE effects.
+   You must provide values for all parameters listed in the suggestedNextTrainingParameters object, even if you recommend keeping them the same as the previous job.
 
-Here are the parameters you *must* include in the \`suggestedNextTrainingParameters\` object:
-- \`momentumParams\` (array of 6 numbers, 0.0-1.0)
-- \`strengthParams\` (array of 6 numbers, 0.0-1.0)
-- \`noiseParams\` (array of 6 numbers, 0.0-1.0)
-- \`couplingParams\` (array of 6 numbers, 0.0-1.0)
+**Parameters to Include in suggestedNextTrainingParameters:**
+- momentumParams (array of 6 numbers, 0.0-1.0)
+- strengthParams (array of 6 numbers, 0.0-1.0)
+- noiseParams (array of 6 numbers, 0.0-1.0)
+- couplingParams (array of 6 numbers, 0.0-1.0)
 - totalEpochs (integer)
 - batchSize (integer)
 - learningRate (float, 0.00001-0.1)
@@ -108,15 +119,17 @@ Here are the parameters you *must* include in the \`suggestedNextTrainingParamet
 - modelName (string)
 - baseConfigId (string or null)
 
-Constraints for ZPE parameters (\`momentumParams\`, \`strengthParams\`, \`noiseParams\`, \`couplingParams\`): values are between 0.0 and 1.0, and each must be an array of 6 values. You *must* include all four of these parameters in your \`suggestedNextTrainingParameters\` object, even if you only suggest changes to some of the values within the arrays.
-Learning rate typically between 0.00001 and 0.1.
+**Constraints:**
+- ZPE parameters (momentumParams, strengthParams, noiseParams, couplingParams): values are between 0.0 and 1.0, and each must be an array of 6 values. You must include all four of these parameters in your suggestedNextTrainingParameters object, even if you only suggest changes to some of the values within the arrays.
+- Learning rate typically between 0.00001 and 0.1.
 
 Output your response in the specified JSON format.
-If suggesting changes to array parameters like \`momentumParams\`, \`strengthParams\`, \`noiseParams\`, or \`couplingParams\`, provide the full array of 6 floating-point values (each between 0.0 and 1.0) with the changes.`,
+If suggesting changes to array parameters like momentumParams, strengthParams, noiseParams, or couplingParams, provide the full array of 6 floating-point values (each between 0.0 and 1.0) with the changes.`
 });
+
 const hsQnnParameterAdvisorFlow = ai.defineFlow(
-  { // Correct way to define flow name
-    name: 'hsQnnParameterAdvisorFlow', // Add the required name property
+  {
+    name: 'hsQnnParameterAdvisorFlow',
     inputSchema: HSQNNAdvisorInputSchema,
   },
   async (input: HSQNNAdvisorInput) => {
@@ -125,7 +138,7 @@ const hsQnnParameterAdvisorFlow = ai.defineFlow(
       throw new Error('AI failed to generate HNN parameter advice.');
     }
 
-    // Ensure modelName is updated to reflect it\'s a new model
+    // Ensure modelName is updated to reflect it's a new model
     if (result.output.suggestedNextTrainingParameters && result.output.suggestedNextTrainingParameters.modelName === input.previousTrainingParameters.modelName) {
       result.output.suggestedNextTrainingParameters.modelName = `${input.previousTrainingParameters.modelName}_hnn_next`;
     } else if (result.output.suggestedNextTrainingParameters && !result.output.suggestedNextTrainingParameters.modelName) {

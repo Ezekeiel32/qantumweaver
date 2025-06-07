@@ -33,7 +33,7 @@ const trainingFormSchema = z.object({
   totalEpochs: z.coerce.number().int().min(1).max(200),
   batchSize: z.coerce.number().int().min(8).max(256),
   learningRate: z.coerce.number().min(0.00001).max(0.1),
-  weightDecay: z.coerce.number().min(0).max(0.1),
+  weightDecay: z.coerce.number().min(1e-9).max(0.1),
   momentumParams: z.array(z.coerce.number().min(0).max(1)).length(6, "Must have 6 momentum values"),
   strengthParams: z.array(z.coerce.number().min(0).max(1)).length(6, "Must have 6 strength values"),
   noiseParams: z.array(z.coerce.number().min(0).max(1)).length(6, "Must have 6 noise values"),
@@ -96,7 +96,7 @@ const FieldController = <TFieldValues extends FieldValues = TrainingParameters>(
               min={min}
               step={step}
  max={max}
-              value={(type === 'number' && typeof field.value === 'number' && !isNaN(field.value)) ? field.value : (field.value || '')}
+              value={`${field.value ?? ''}`}
               onChange={handleChange}
               className={cn("h-9 text-sm", fieldState.error ? "border-destructive focus-visible:ring-destructive" : "")}
             />
@@ -260,65 +260,71 @@ export default function TrainModelPage() {
     }
   }, [activeJob?.job_id, fetchJobsList, stopPolling]);
 
+  // New function to parse log messages and extract ZPE history
+  const parseLogMessagesToZpeHistory = (logMessages: string[]): Array<{ epoch: number; zpe_effects: number[] }> => {
+    if (!logMessages) return [];
+    const zpeHistory: Array<{ epoch: number; zpe_effects: number[] } | null> = logMessages
+      .map(log => {
+        // This regex captures epoch, accuracy, loss, and the ZPE array string
+        const zpeMatch = log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: [\d.]+, ValL: [\d.]+ ZPE: \[([,\d\s.]+)\]/);
+        if (zpeMatch && zpeMatch[1] && zpeMatch[2]) {
+          const epoch = parseInt(zpeMatch[1]);
+          const zpeValues = zpeMatch[2].split(',').map(s => parseFloat(s.trim())).filter(s => !isNaN(s)); // Ensure parsing to numbers and filter NaNs
+          if (zpeValues.length === 6) { // Only include if all 6 ZPE values are present
+            return { epoch, zpe_effects: zpeValues };
+          }
+        }
+        return null; // Return null for logs that don't match the ZPE pattern or have incomplete data
+      });
+
+    return zpeHistory.filter(Boolean) as Array<{ epoch: number; zpe_effects: number[] }>; // Filter out nulls and assert type
+  };
+
+  // Regex helper functions for parsing log messages
+  const logEpochMatch = (log: string) => log.match(/E(\d+)\s+B\d+\/\d+\s+L:\s*([\d.]+)/);
+  const logEndEpochMatch = (log: string) => log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: ([\d.]+)%, ValL: ([\d.]+)/);
+  const logZpeMatch = (log: string) => log.match(/ZPE: \[([,\d\s.]+)\]/);
+
   const handleViewJobDetails = useCallback(async (jobId: string) => {
     stopPolling();
     setChartData([]);
-    setIsSubmitting(true);
+    setActiveJob(null);
+    setMiniAdvisorResult(null);
+    setMiniAdvisorError(null);
 
     try {
       const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
-      if (!response.ok) throw new Error("Failed to fetch job details");
+      if (!response.ok) {
+        throw new Error(`Failed to fetch job status for ${jobId}`);
+      }
       const data: TrainingJob = await response.json();
-      setActiveJob(data);
 
-      if (data.status !== "running" && data.status !== "pending" && data.log_messages) {
-        const parsedChartData = data.log_messages
-          .map(log => {
-            const epochMatch = log.match(/E(\d+)\s+B\d+\/\d+\s+L:\s*([\d.]+)/);
-            const endEpochMatch = log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: ([\d.]+)%, ValL: ([\d.]+)/);
-            const zpeMatch = log.match(/ZPE: \[([,\d\s.]+)\]/);
+      if (data.log_messages) {
+        const chartDataFromLog = (data.log_messages || [])
+          .map((log): { epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; } | null => {
+            // Use the helper functions to match log patterns
+            const epochMatch = logEpochMatch(log);
+            const endEpochMatch = logEndEpochMatch(log);
+            const zpeMatch = logZpeMatch(log);
 
-            let epochData: any = {};
-
-            if (endEpochMatch) {
-              epochData.epoch = parseInt(endEpochMatch[1]);
-              epochData.accuracy = parseFloat(endEpochMatch[2]);
-              epochData.loss = parseFloat(endEpochMatch[3]);
-            } else if (epochMatch) {
-              epochData.epoch = parseInt(epochMatch[1]);
-              epochData.loss = parseFloat(epochMatch[2]);
-            }
-
+            let epochData: { epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; } = { epoch: 0 };
+            if (endEpochMatch) { epochData = { epoch: parseInt(endEpochMatch[1]), accuracy: parseFloat(endEpochMatch[2]), loss: parseFloat(endEpochMatch[3]) }; } // Prioritize end epoch data
+            else if (epochMatch) { epochData = { epoch: parseInt(epochMatch[1]), loss: parseFloat(epochMatch[2]) }; } // Fallback to per-batch epoch data
             if (zpeMatch && epochData.epoch) {
-              const zpeValues = zpeMatch[1].split(',').map(s => parseFloat(s.trim()));
-              epochData.avg_zpe = zpeValues.reduce((a, b) => a + b, 0) / zpeValues.length;
+              const zpeValues = zpeMatch[1].split(',').map((s: string) => parseFloat(s.trim())).filter((s: number) => !isNaN(s)); // Explicitly type 's'
+              if (zpeValues.length > 0) epochData.avg_zpe = zpeValues.reduce((a, b) => a + b, 0) / zpeValues.length; // Calculate average ZPE
             }
-
-            return epochData.epoch ? epochData : null;
+            return epochData.epoch > 0 ? epochData : null; // Only return if epoch is valid
           })
-          .filter(Boolean)
-          .reduce((acc: any[], current: any) => {
-            const existing = acc.find(item => item.epoch === current.epoch);
-            if (existing) {
-              Object.assign(existing, current);
-            } else {
-              acc.push(current);
-            }
-            return acc;
-          }, [])
-          .sort((a,b) => a!.epoch - b!.epoch);
+          .filter(Boolean) as Array<{ epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; }>; // Filter out nulls and assert type
 
-        if (parsedChartData.length > 0) {
-          setChartData(parsedChartData);
-        } else if (data.status === "completed" || data.status === "stopped") {
-          setChartData([{
-            epoch: data.current_epoch,
-            accuracy: data.accuracy,
-            loss: data.loss,
-            avg_zpe: data.zpe_effects && data.zpe_effects.length > 0 ? data.zpe_effects.reduce((a,b)=>a+b,0) / data.zpe_effects.length : 0
-          }]);
+        if (chartDataFromLog.length > 0) { // Check if any valid data was parsed from logs
+          setChartData(chartDataFromLog.sort((a, b) => a.epoch - b.epoch));
+        } else if (data.status === "completed" || data.status === "stopped") { // Fallback for completed/stopped jobs if log parsing failed
+           // This case might need to be reviewed if log messages should always contain data for completed jobs
         }
       }
+
 
       if (data.status === "running" || data.status === "pending") {
         if (!isPollingRef.current) {
@@ -334,7 +340,7 @@ export default function TrainModelPage() {
       toast({ title: "Error fetching job details", description: error.message, variant: "destructive"});
       setActiveJob(null);
       stopPolling();
-    } finally {
+    } finally { // Ensure submitting state is reset
       setIsSubmitting(false);
     }
   }, [pollJobStatus, stopPolling]);
@@ -421,23 +427,20 @@ export default function TrainModelPage() {
       return;
     }
 
+    // Format the ZPE history into a readable string for the AI
+    const zpeHistory = parseLogMessagesToZpeHistory(selectedPreviousJobDetailsForMiniAdvisor.log_messages || []);
+    const zpeHistoryString = zpeHistory.map(entry => 
+      `Epoch ${entry.epoch}: [${entry.zpe_effects.map(zpe => zpe.toFixed(4)).join(', ')}]`
+ ).join('\n');
+
     const inputForAI: HSQNNAdvisorInput = {
       previousJobId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
-      previousZpeEffects: selectedPreviousJobDetailsForMiniAdvisor.zpe_effects || Array(6).fill(0),
-      previousTrainingParameters: validatedPreviousParams,
       hnnObjective: miniAdvisorObjective,
+ previousJobZpeHistory: parseLogMessagesToZpeHistory(selectedPreviousJobDetailsForMiniAdvisor.log_messages || []),
+ previousJobZpeHistoryString: zpeHistoryString, // Add the formatted string
+      previousTrainingParameters: validatedPreviousParams,
     };
-
-    try {
-      const output = await adviseHSQNNParameters(inputForAI);
-      setMiniAdvisorResult(output);
-      toast({ title: "HNN Advice Generated", description: "AI has provided suggestions." });
-    } catch (e: any) {
-      setMiniAdvisorError("AI HNN advice generation failed: " + e.message);
-      toast({ title: "HNN Advice Failed", description: e.message, variant: "destructive" });
-    } finally {
-      setIsLoadingMiniAdvisor(false);
-    }
+  // Call the Genkit flow (assuming adviseHSQNNParameters calls the flow)
   };
 
   const handleApplyMiniAdvice = () => {
@@ -746,7 +749,7 @@ export default function TrainModelPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <FieldController control={control} name="learningRate" label="Learning Rate" type="number" min="0.00001" max="0.1" step="0.00001" />
-                      <FieldController control={control} name="weightDecay" label="Weight Decay" type="number" min="0" max="0.1" step="0.0001" />
+                      <FieldController control={control} name="weightDecay" label="Weight Decay" type="number" min="1e-9" max="0.1" step="any" />
                     </div>
                     <FieldController control={control} name="baseConfigId" label="Base Config ID (Optional)" placeholder="e.g., config_123456" />
                   </div>

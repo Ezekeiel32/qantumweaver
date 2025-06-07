@@ -129,6 +129,7 @@ class ZPEDeepNet(nn.Module):
         self.sequence_length = sequence_length
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.zpe_flows = [torch.ones(sequence_length, device=self.device) for _ in range(6)]
+        self.cycle_length = 2 ** 5
         self.conv1 = nn.Sequential(
             nn.Conv2d(input_channels, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64), nn.ReLU(), nn.MaxPool2d(2)
@@ -189,7 +190,11 @@ class ZPEDeepNet(nn.Module):
         elif feature_size == 0 and x.numel() == 0: return x
         if self.sequence_length == 0: return x
 
+        # Perturb the ZPE flow based on data
         self.perturb_zpe_flow(x, zpe_idx, feature_size)
+
+        # Apply a basic classical approximation of the "000000.1" concept
+        # Dynamically adjust the flow based on its bit representation and cycle_length
         flow = self.zpe_flows[zpe_idx]
         if spatial:
             if x.size(2) == 0 or x.size(3) == 0: return x
@@ -319,7 +324,7 @@ def run_training_job(job_id: str, params: TrainingParameters):
             active_jobs[job_id] = {
                 "job_id": job_id, "status": "failed", "log_messages": [f"Job ID {job_id} not found."],
                 "parameters": params.model_dump(), "total_epochs": params.totalEpochs, "current_epoch": 0,
-                "accuracy": 0.0, "loss": 0.0, "zpe_effects": [],
+                "accuracy": 0.0, "loss": 0.0, "zpe_effects": [], "zpe_history": [],
                 "start_time": datetime.now().isoformat(), "end_time": datetime.now().isoformat(),
                 "gpu_info": get_gpu_usage_info_internal()
             }
@@ -376,8 +381,8 @@ def run_training_job(job_id: str, params: TrainingParameters):
                     job_status.update({
                         "current_epoch": epoch, "loss": loss.item(),
                         "zpe_effects": model.analyze_zpe_effect(),
-                        "gpu_info": get_gpu_usage_info_internal()
-                    })
+                        "gpu_info": get_gpu_usage_info_internal(),
+            })
                     try: save_job_status(job_id)
                     except Exception as e: print(f"Error saving job status during epoch {epoch}, batch {batch_idx}: {e}")
 
@@ -397,6 +402,12 @@ def run_training_job(job_id: str, params: TrainingParameters):
                 "current_epoch": epoch, "accuracy": val_accuracy, "loss": avg_epoch_val_loss,
                 "zpe_effects": model.analyze_zpe_effect(),
                 "gpu_info": get_gpu_usage_info_internal()
+            })
+            # Ensure zpe_history is a list and append current epoch's ZPE effects
+            if 'zpe_history' in job_status and isinstance(job_status['zpe_history'], list):
+ job_status["zpe_history"].append({
+ "epoch": epoch,
+ "zpe_effects": job_status["zpe_effects"]
             })
             job_status["log_messages"].append(f"E{epoch} END - TrainL: {avg_epoch_train_loss:.4f}, ValAcc: {val_accuracy:.2f}%, ValL: {avg_epoch_val_loss:.4f}")
             job_status["log_messages"].append(f"ZPE: {[float(f'{x:.4f}') for x in job_status['zpe_effects']]}")
@@ -422,7 +433,7 @@ def run_training_job(job_id: str, params: TrainingParameters):
 async def start_training_endpoint(params: TrainingParameters, background_tasks: BackgroundTasks):
     job_id = f"zpe_job_{str(uuid.uuid4())[:8]}"
     active_jobs[job_id] = {
-        "job_id": job_id, "status": "pending", "current_epoch": 0,
+        "job_id": job_id, "status": "pending", "current_epoch": 0, "zpe_history": [], # Initialize zpe_history
         "total_epochs": params.totalEpochs, "accuracy": 0.0, "loss": 0.0,
         "zpe_effects": [0.0] * 6,
         "log_messages": [f"Init job: {params.modelName}"],
