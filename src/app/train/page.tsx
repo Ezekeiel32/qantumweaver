@@ -25,6 +25,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { adviseHSQNNParameters, type HSQNNAdvisorInput, type HSQNNAdvisorOutput } from "@/ai/flows/hs-qnn-parameter-advisor";
+import { HSQNNAdvisor } from "@/components/hs-qnn-advisor";
+import { defaultZPEParams } from "@/lib/constants";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
@@ -43,13 +45,6 @@ const trainingFormSchema = z.object({
   quantumMode: z.boolean(),
   baseConfigId: z.string().nullable().optional(),
 });
-
-const defaultZPEParams = {
-  momentum: [0.9, 0.85, 0.8, 0.75, 0.7, 0.65],
-  strength: [0.35, 0.33, 0.31, 0.60, 0.27, 0.50],
-  noise: [0.3, 0.28, 0.26, 0.35, 0.22, 0.25],
-  coupling: [0.85, 0.82, 0.79, 0.76, 0.73, 0.7],
-};
 
 interface FieldControllerProps<TName extends FieldPath<TrainingParameters>> {
   control: Control<TrainingParameters>;
@@ -154,26 +149,17 @@ export default function TrainModelPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [completedJobsListForAdvisor, setCompletedJobsListForAdvisor] = useState<TrainingJobSummary[]>([]);
-  const [selectedJobIdForMiniAdvisor, setSelectedJobIdForMiniAdvisor] = useState<string>("");
-  const [miniAdvisorObjective, setMiniAdvisorObjective] = useState<string>("Maximize validation accuracy while maintaining ZPE stability and exploring a slight increase in learning rate if previous accuracy was high.");
-  const [miniAdvisorResult, setMiniAdvisorResult] = useState<HSQNNAdvisorOutput | null>(null);
-  const [isLoadingMiniAdvisor, setIsLoadingMiniAdvisor] = useState<boolean>(false);
-  const [miniAdvisorError, setMiniAdvisorError] = useState<string | null>(null);
-  const [selectedPreviousJobDetailsForMiniAdvisor, setSelectedPreviousJobDetailsForMiniAdvisor] = useState<TrainingJob | null>(null);
-  const [isMiniAdvisorLoadingJobs, setIsMiniAdvisorLoadingJobs] = useState(false);
-
-  const [formKey, setFormKey] = useState(0); // New state variable for the key
+  const [formKey, setFormKey] = useState(0);
   const defaultFormValues: TrainingParameters = {
     modelName: "ZPE-QuantumWeaver-V1",
     totalEpochs: 30,
     batchSize: 32,
     learningRate: 0.001,
     weightDecay: 0.0001,
-    momentumParams: defaultZPEParams.momentum,
-    strengthParams: defaultZPEParams.strength,
-    noiseParams: defaultZPEParams.noise,
-    couplingParams: defaultZPEParams.coupling,
+    momentumParams: defaultZPEParams.momentumParams,
+    strengthParams: defaultZPEParams.strengthParams,
+    noiseParams: defaultZPEParams.noiseParams,
+    couplingParams: defaultZPEParams.couplingParams,
     quantumCircuitSize: 32,
     labelSmoothing: 0.1,
     quantumMode: true,
@@ -185,13 +171,12 @@ export default function TrainModelPage() {
     defaultValues: defaultFormValues,
   });
 
- // Debugging useEffect to watch form state changes for array parameters
   useEffect(() => {
     const momentum = watch("momentumParams");
     const strength = watch("strengthParams");
     const noise = watch("noiseParams");
     const coupling = watch("couplingParams");
-  }, [watch]); // This effect will re-run whenever watch detects changes in any field
+  }, [watch]);
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
@@ -269,27 +254,24 @@ export default function TrainModelPage() {
     }
   }, [activeJob?.job_id, fetchJobsList, stopPolling]);
 
-  // New function to parse log messages and extract ZPE history
   const parseLogMessagesToZpeHistory = (logMessages: string[]): Array<{ epoch: number; zpe_effects: number[] }> => {
     if (!logMessages) return [];
     const zpeHistory: Array<{ epoch: number; zpe_effects: number[] } | null> = logMessages
       .map(log => {
-        // This regex captures epoch, accuracy, loss, and the ZPE array string
         const zpeMatch = log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: [\d.]+, ValL: [\d.]+ ZPE: \[([,\d\s.]+)\]/);
         if (zpeMatch && zpeMatch[1] && zpeMatch[2]) {
           const epoch = parseInt(zpeMatch[1]);
-          const zpeValues = zpeMatch[2].split(',').map(s => parseFloat(s.trim())).filter(s => !isNaN(s)); // Ensure parsing to numbers and filter NaNs
-          if (zpeValues.length === 6) { // Only include if all 6 ZPE values are present
+          const zpeValues = zpeMatch[2].split(',').map(s => parseFloat(s.trim())).filter(s => !isNaN(s));
+          if (zpeValues.length === 6) {
             return { epoch, zpe_effects: zpeValues };
           }
         }
-        return null; // Return null for logs that don't match the ZPE pattern or have incomplete data
+        return null;
       });
 
-    return zpeHistory.filter(Boolean) as Array<{ epoch: number; zpe_effects: number[] }>; // Filter out nulls and assert type
+    return zpeHistory.filter(Boolean) as Array<{ epoch: number; zpe_effects: number[] }>;
   };
 
-  // Regex helper functions for parsing log messages
   const logEpochMatch = (log: string) => log.match(/E(\d+)\s+B\d+\/\d+\s+L:\s*([\d.]+)/);
   const logEndEpochMatch = (log: string) => log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: ([\d.]+)%, ValL: ([\d.]+)/);
   const logZpeMatch = (log: string) => log.match(/ZPE: \[([,\d\s.]+)\]/);
@@ -298,8 +280,6 @@ export default function TrainModelPage() {
     stopPolling();
     setChartData([]);
     setActiveJob(null);
-    setMiniAdvisorResult(null);
-    setMiniAdvisorError(null);
 
     try {
       const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
@@ -311,29 +291,26 @@ export default function TrainModelPage() {
       if (data.log_messages) {
         const chartDataFromLog = (data.log_messages || [])
           .map((log): { epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; } | null => {
-            // Use the helper functions to match log patterns
             const epochMatch = logEpochMatch(log);
             const endEpochMatch = logEndEpochMatch(log);
             const zpeMatch = logZpeMatch(log);
 
             let epochData: { epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; } = { epoch: 0 };
-            if (endEpochMatch) { epochData = { epoch: parseInt(endEpochMatch[1]), accuracy: parseFloat(endEpochMatch[2]), loss: parseFloat(endEpochMatch[3]) }; } // Prioritize end epoch data
-            else if (epochMatch) { epochData = { epoch: parseInt(epochMatch[1]), loss: parseFloat(epochMatch[2]) }; } // Fallback to per-batch epoch data
+            if (endEpochMatch) { epochData = { epoch: parseInt(endEpochMatch[1]), accuracy: parseFloat(endEpochMatch[2]), loss: parseFloat(endEpochMatch[3]) }; }
+            else if (epochMatch) { epochData = { epoch: parseInt(epochMatch[1]), loss: parseFloat(epochMatch[2]) }; }
             if (zpeMatch && epochData.epoch) {
-              const zpeValues = zpeMatch[1].split(',').map((s: string) => parseFloat(s.trim())).filter((s: number) => !isNaN(s)); // Explicitly type 's'
-              if (zpeValues.length > 0) epochData.avg_zpe = zpeValues.reduce((a, b) => a + b, 0) / zpeValues.length; // Calculate average ZPE
+              const zpeValues = zpeMatch[1].split(',').map((s: string) => parseFloat(s.trim())).filter((s: number) => !isNaN(s));
+              if (zpeValues.length > 0) epochData.avg_zpe = zpeValues.reduce((a, b) => a + b, 0) / zpeValues.length;
             }
-            return epochData.epoch > 0 ? epochData : null; // Only return if epoch is valid
+            return epochData.epoch > 0 ? epochData : null;
           })
-          .filter(Boolean) as Array<{ epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; }>; // Filter out nulls and assert type
+          .filter(Boolean) as Array<{ epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; }>;
 
-        if (chartDataFromLog.length > 0) { // Check if any valid data was parsed from logs
+        if (chartDataFromLog.length > 0) {
           setChartData(chartDataFromLog.sort((a, b) => a.epoch - b.epoch));
-        } else if (data.status === "completed" || data.status === "stopped") { // Fallback for completed/stopped jobs if log parsing failed
-           // This case might need to be reviewed if log messages should always contain data for completed jobs
+        } else if (data.status === "completed" || data.status === "stopped") {
         }
       }
-
 
       if (data.status === "running" || data.status === "pending") {
         if (!isPollingRef.current) {
@@ -349,249 +326,10 @@ export default function TrainModelPage() {
       toast({ title: "Error fetching job details", description: error.message, variant: "destructive"});
       setActiveJob(null);
       stopPolling();
-    } finally { // Ensure submitting state is reset
+    } finally {
       setIsSubmitting(false);
     }
   }, [pollJobStatus, stopPolling]);
-
-  const fetchCompletedJobsForMiniAdvisor = useCallback(async () => {
-    setIsMiniAdvisorLoadingJobs(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/jobs?limit=50`);
-      if (!response.ok) throw new Error("Failed to fetch completed jobs list for advisor");
-      const data = await response.json();
-      const completedJobs = (data.jobs || [])
-        .filter((job: TrainingJobSummary) => job.status === "completed")
-        .sort((a: TrainingJobSummary, b: TrainingJobSummary) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
-      setCompletedJobsListForAdvisor(completedJobs);
-      if (completedJobs.length > 0 && !selectedJobIdForMiniAdvisor) {
-        setSelectedJobIdForMiniAdvisor(completedJobs[0].job_id);
-      }
-    } catch (error: any) {
-      toast({ title: "Error fetching completed jobs", description: error.message, variant: "destructive" });
-    } finally {
-      setIsMiniAdvisorLoadingJobs(false);
-    }
-  }, [selectedJobIdForMiniAdvisor]);
-
-  useEffect(() => {
-    fetchCompletedJobsForMiniAdvisor();
-  }, [fetchCompletedJobsForMiniAdvisor]);
-
-  useEffect(() => {
-    if (selectedJobIdForMiniAdvisor) {
-      const fetchDetails = async () => {
-        setIsLoadingMiniAdvisor(true);
-        setMiniAdvisorResult(null);
-        setMiniAdvisorError(null);
-        try {
-          const response = await fetch(`${API_BASE_URL}/status/${selectedJobIdForMiniAdvisor}`);
-          if (!response.ok) throw new Error(`Failed to fetch details for job ${selectedJobIdForMiniAdvisor}`);
-          const data: TrainingJob = await response.json();
-          if (data.status !== 'completed') {
-            setSelectedPreviousJobDetailsForMiniAdvisor(null);
-            throw new Error(`Job ${selectedJobIdForMiniAdvisor} is not completed. Current status: ${data.status}`);
-          }
-          setSelectedPreviousJobDetailsForMiniAdvisor(data);
-        } catch (e: any) {
-          setSelectedPreviousJobDetailsForMiniAdvisor(null);
-          setMiniAdvisorError("Failed to fetch selected job details for advisor: " + e.message);
-          toast({ title: "Error fetching job details", description: e.message, variant: "destructive" });
-        } finally {
-          setIsLoadingMiniAdvisor(false);
-        }
-      };
-      fetchDetails();
-    } else {
-      setSelectedPreviousJobDetailsForMiniAdvisor(null);
-    }
-  }, [selectedJobIdForMiniAdvisor]);
-
-  const handleGetMiniAdvice = async () => {
-    if (!selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "Error", description: "No previous job selected for HNN advice.", variant: "destructive" });
-      return;
-    }
-    if (selectedPreviousJobDetailsForMiniAdvisor.status !== 'completed') {
-      toast({ title: "Invalid Job", description: "Please select a 'completed' job for HNN advice.", variant: "destructive" });
-      return;
-    }
-
-    setIsLoadingMiniAdvisor(true);
-    setMiniAdvisorError(null);
-    setMiniAdvisorResult(null);
-
-    let validatedPreviousParams: TrainingParameters;
-    try {
-      const paramsToValidate = {
-        ...defaultFormValues,
-        ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
-      };
-      validatedPreviousParams = trainingFormSchema.parse(paramsToValidate);
-    } catch (validationError: any) {
-      console.error("Validation error for previousTrainingParameters (mini advisor):", validationError);
-      setMiniAdvisorError("Previous job parameters are not in the expected format. Check console for details. Error: " + validationError.message);
-      toast({ title: "Parameter Mismatch", description: "Previous job parameters format error. " + validationError.message, variant: "destructive" });
-      setIsLoadingMiniAdvisor(false);
-      return;
-    }
-
-    // Format the ZPE history into a readable string for the AI
-    const zpeHistory = parseLogMessagesToZpeHistory(selectedPreviousJobDetailsForMiniAdvisor.log_messages || []);
-    const zpeHistoryString = zpeHistory.map(entry => 
-      `Epoch ${entry.epoch}: [${entry.zpe_effects.map(zpe => zpe.toFixed(4)).join(', ')}]`
- ).join('\n');
-
-    const inputForAI: HSQNNAdvisorInput = {
-      previousJobId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
-      hnnObjective: miniAdvisorObjective,
- previousJobZpeHistory: parseLogMessagesToZpeHistory(selectedPreviousJobDetailsForMiniAdvisor.log_messages || []),
- previousJobZpeHistoryString: zpeHistoryString, // Add the formatted string
-      previousTrainingParameters: validatedPreviousParams,
-    };
-
-    try {
-      const result = await adviseHSQNNParameters(inputForAI);
-      setMiniAdvisorResult(result);
-    } catch (error: any) {
-      console.error("Error getting HNN advice:", error);
-      setMiniAdvisorError("Failed to get HNN advice: " + error.message);
-      toast({ title: "HNN Advice Failed", description: error.message, variant: "destructive" });
-    } finally {
-      setIsLoadingMiniAdvisor(false);
-    }  };
-
- // Changed to use setValue for more granular control and better compatibility with react-hook-form for arrays
- const handleApplyMiniAdvice = () => {
-    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "No advice to apply", variant: "destructive" });
-      return;
-    }
-
-    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
-    const previousParams = selectedPreviousJobDetailsForMiniAdvisor.parameters;
-
-    // Start with defaults
-    let mergedParams: TrainingParameters = {
-      ...defaultFormValues,
-    };
-
-    // Override with previous job's parameters
-    mergedParams = {
-      ...mergedParams,
-      ...previousParams,
-    };
-
-    // Finally, override with suggested parameters to ensure suggested values take precedence.
-    // Explicitly handle array parameters and specific fields like modelName and baseConfigId.
-    mergedParams = {
-      ...mergedParams,
-      ...suggested,
-      // Ensure modelName is set correctly, prioritizing suggested or creating a new name
-      // based on the previous model name.
-      modelName: suggested.modelName || `${previousParams.modelName}_adv_${Date.now().toString().slice(-3)}`,
-      // Ensure baseConfigId is set to the previous job's ID
-      baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
-    };
-
-    const validationResult = trainingFormSchema.safeParse(mergedParams);
-
-    if (validationResult.success) {
-      reset(validationResult.data);
-      toast({ title: "Parameters Applied", description: "Advisor suggestions applied to the form." });
-      setFormKey(prevKey => prevKey + 1); // Increment key to force re-render
-    } else {
-      console.error("Validation error applying HNN mini-advice:", validationResult.error.errors);
-      let errorSummary = "Error applying advice: " + validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
-      toast({ title: "Validation Error on Apply", description: errorSummary, variant: "destructive" });
-    }
-  };
-
-  const handleSaveSuggestedParameters = async () => {
-    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "Error", description: "No suggested parameters to save.", variant: "destructive" });
-      return;
-    }
-
-    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
-    const configToSave = {
-      name: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-      parameters: {
-        ...defaultFormValues,
-        ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
-        ...suggested,
-        baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
-        modelName: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-      },
-      date_created: new Date().toISOString().split('T')[0],
-      accuracy: 0,
-      loss: 0,
-      use_quantum_noise: suggested.quantumMode !== undefined ? suggested.quantumMode : selectedPreviousJobDetailsForMiniAdvisor.parameters.quantumMode,
-    };
-
-    configToSave.parameters = {
-      totalEpochs: configToSave.parameters.totalEpochs,
-      batchSize: configToSave.parameters.batchSize,
-      learningRate: configToSave.parameters.learningRate,
-      weightDecay: configToSave.parameters.weightDecay,
-      momentumParams: configToSave.parameters.momentumParams,
-      strengthParams: configToSave.parameters.strengthParams,
-      noiseParams: configToSave.parameters.noiseParams,
-      couplingParams: configToSave.parameters.couplingParams || defaultZPEParams.coupling,
-      quantumCircuitSize: configToSave.parameters.quantumCircuitSize,
-      labelSmoothing: configToSave.parameters.labelSmoothing,
-      quantumMode: configToSave.parameters.quantumMode,
-      modelName: configToSave.parameters.modelName,
-      baseConfigId: configToSave.parameters.baseConfigId,
-    };
-
-    setIsSubmitting(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/configs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(configToSave),
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Failed to save configuration: ${response.status} ${response.statusText}. ${errorData.detail || ''}`);
-      }
-      const saved = await response.json();
-      toast({ title: "Configuration Saved", description: `Config "${configToSave.name}" (ID: ${saved.config_id.slice(-6)}) saved.` });
-    } catch (error: any) {
-      console.error("Error saving suggested parameters:", error);
-      toast({ title: "Save Failed", description: error.message, variant: "destructive" });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDownloadSuggestedParameters = () => {
-    if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
-      toast({ title: "Error", description: "No suggested parameters to download.", variant: "destructive" });
-      return;
-    }
-    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
-    const filename = `${suggested.modelName || `advised_params_${Date.now().toString().slice(-4)}`}.json`;
-    const jsonStr = JSON.stringify({
-      ...defaultFormValues,
-      ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
-      ...suggested,
-      modelName: suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-      baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
-    }, null, 2);
-
-    const blob = new Blob([jsonStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast({ title: "Parameters Downloaded", description: `Saved as ${filename}` });
-  };
 
   const onSubmit = async (data: TrainingParameters) => {
     setIsSubmitting(true);
@@ -652,6 +390,30 @@ export default function TrainModelPage() {
       console.log("useEffect: Starting initialization");
 
       try {
+        // --- ADVISOR PARAMS FROM URL ---
+        const advisedParamsEncoded = searchParams.get("advisedParams");
+        if (advisedParamsEncoded) {
+          try {
+            const decoded = atob(advisedParamsEncoded);
+            const parsed = JSON.parse(decoded);
+            // Merge with defaults and validate
+            const safeParams = {
+              ...defaultFormValues,
+              ...parsed,
+              momentumParams: (parsed.momentumParams && parsed.momentumParams.length === 6) ? parsed.momentumParams : defaultFormValues.momentumParams,
+              strengthParams: (parsed.strengthParams && parsed.strengthParams.length === 6) ? parsed.strengthParams : defaultFormValues.strengthParams,
+              noiseParams: (parsed.noiseParams && parsed.noiseParams.length === 6) ? parsed.noiseParams : defaultFormValues.noiseParams,
+              couplingParams: (parsed.couplingParams && parsed.couplingParams.length === 6) ? parsed.couplingParams : defaultFormValues.couplingParams,
+            };
+            reset(safeParams);
+            toast({ title: "Loading in Trainer", description: `Parameters for \"${safeParams.modelName}\" pre-filled.` });
+            return; // Don't do other prefill logic if we loaded from advisor
+          } catch (e) {
+            toast({ title: "Advisor Prefill Failed", description: "Could not decode or parse advisor parameters." });
+          }
+        }
+        // --- END ADVISOR PARAMS FROM URL ---
+
         console.log("useEffect: Fetching jobs list...");
         const recentJobs = await fetchJobsList();
         console.log(`useEffect: Fetched ${recentJobs.length} jobs.`);
@@ -753,17 +515,57 @@ export default function TrainModelPage() {
     </div>
   );
 
+  const handleSaveSuggestedParameters = async (params: TrainingParameters) => {
+    if (!activeJob) {
+      toast({ title: "Error", description: "No active job to save parameters for.", variant: "destructive" });
+      return;
+    }
+
+    const configToSave = {
+      name: params.modelName || `${params.modelName}_advised_${Date.now().toString().slice(-4)}`,
+      parameters: {
+        ...defaultZPEParams,
+        ...params,
+        baseConfigId: params.baseConfigId || activeJob.parameters.baseConfigId,
+        modelName: params.modelName || `${params.modelName}_advised_${Date.now().toString().slice(-4)}`,
+      },
+      date_created: new Date().toISOString().split('T')[0],
+      accuracy: 0,
+      loss: 0,
+      use_quantum_noise: params.quantumMode !== undefined ? params.quantumMode : activeJob.parameters.quantumMode,
+    };
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/configs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configToSave),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to save configuration: ${response.status} ${response.statusText}. ${errorData.detail || ''}`);
+      }
+      const saved = await response.json();
+      toast({ title: "Configuration Saved", description: `Config "${configToSave.name}" (ID: ${saved.config_id.slice(-6)}) saved.` });
+    } catch (error: any) {
+      console.error("Error saving suggested parameters:", error);
+      toast({ title: "Save Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <div className="container mx-auto py-6 px-4">
+    <div className="container mx-auto p-4 md:p-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Training Configuration */}
         <Card className="w-full">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-xl"><Zap className="h-6 w-6 text-primary" /> Train Configuration</CardTitle>
             <CardDescription>Configure your ZPE-enhanced neural network training job.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" key={formKey}> {/* Add key prop here */}
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" key={formKey}>
               <Tabs defaultValue="general" className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="general">General</TabsTrigger>
@@ -800,88 +602,23 @@ export default function TrainModelPage() {
                   </div>
                 </TabsContent>
               </Tabs>
-              {/* HS-QNN Mini Advisor */}
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg"><Brain className="h-5 w-5 text-primary" /> HS-QNN Mini Advisor</CardTitle>
-                  <CardDescription>Get AI-driven suggestions for your next training step.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="selectedJobIdForMiniAdvisor">Select Previous Job</Label>
-                    <Select
-                      value={selectedJobIdForMiniAdvisor}
-                      onValueChange={setSelectedJobIdForMiniAdvisor}
-                      disabled={isMiniAdvisorLoadingJobs || isLoadingMiniAdvisor}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select a completed job..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {completedJobsListForAdvisor.map((job) => (
-                          <SelectItem key={job.job_id} value={job.job_id}>
-                            {job.job_id.replace('zpe_job_', '')} ({job.model_name}, Acc: {job.accuracy.toFixed(2)}%)
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="miniAdvisorObjective">Advisor Objective</Label>
-                    <Textarea
-                      id="miniAdvisorObjective"
-                      value={miniAdvisorObjective}
-                      onChange={(e) => setMiniAdvisorObjective(e.target.value)}
-                      placeholder="e.g., Maximize validation accuracy while maintaining ZPE stability..."
-                      className="min-h-[80px] w-full"
-                    />
-                  </div>
-                  {selectedPreviousJobDetailsForMiniAdvisor && (
-                    <div className="space-y-2">
-                      <Label>Selected Job Details</Label>
-                      <pre className="p-2 bg-muted rounded-md text-sm overflow-auto max-h-32">
-                        {JSON.stringify(selectedPreviousJobDetailsForMiniAdvisor.parameters, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                  {miniAdvisorError && (
-                    <Alert variant="destructive">
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertTitle>Error</AlertTitle>
-                      <AlertDescription>{miniAdvisorError}</AlertDescription>
-                    </Alert>
-                  )}
-                  {miniAdvisorResult && (
-                    <div className="space-y-2">
- <Label>Advisor Reasoning</Label>
-                      <pre className="p-2 bg-muted rounded-md text-sm whitespace-pre-wrap overflow-auto max-h-32">
- {miniAdvisorResult.reasoning || "No reasoning provided."}
- </pre>
- <Separator />
-                      <Label>Suggested Parameters</Label>
-                      <pre className="p-2 bg-muted rounded-md text-sm overflow-auto max-h-32">
-                        {JSON.stringify(miniAdvisorResult.suggestedNextTrainingParameters, null, 2)}
-                      </pre>
-                      <div className="flex gap-2">
-                        <Button onClick={handleApplyMiniAdvice} disabled={isLoadingMiniAdvisor}>
-                          <Wand2 className="mr-2 h-4 w-4" /> Apply to Form
-                        </Button>
-                        <Button variant="outline" onClick={handleSaveSuggestedParameters} disabled={isLoadingMiniAdvisor || isSubmitting}>
-                          <Save className="mr-2 h-4 w-4" /> Save Config
-                        </Button>
-                        <Button variant="outline" onClick={handleDownloadSuggestedParameters}>
-                          <Download className="mr-2 h-4 w-4" /> Download JSON
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-                <CardFooter>
-                  <Button onClick={handleGetMiniAdvice} disabled={isLoadingMiniAdvisor || !selectedJobIdForMiniAdvisor || isSubmitting}>
-                    {isLoadingMiniAdvisor ? "Generating Advice..." : "Get HNN Advice"}
-                  </Button>
-                </CardFooter>
-              </Card>
+              <HSQNNAdvisor
+                onApplyParameters={(params) => {
+                  // Ensure all required fields are present and arrays are correct length
+                  const safeParams = {
+                    ...defaultFormValues,
+                    ...params,
+                    momentumParams: (params.momentumParams && params.momentumParams.length === 6) ? params.momentumParams : defaultFormValues.momentumParams,
+                    strengthParams: (params.strengthParams && params.strengthParams.length === 6) ? params.strengthParams : defaultFormValues.strengthParams,
+                    noiseParams: (params.noiseParams && params.noiseParams.length === 6) ? params.noiseParams : defaultFormValues.noiseParams,
+                    couplingParams: (params.couplingParams && params.couplingParams.length === 6) ? params.couplingParams : defaultFormValues.couplingParams,
+                  };
+                  reset(safeParams);
+                  setFormKey(prevKey => prevKey + 1);
+                }}
+                onSaveConfig={handleSaveSuggestedParameters}
+                className="mt-6"
+              />
               <CardFooter className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => reset(defaultFormValues)} disabled={isSubmitting}>
                   Reset
@@ -894,7 +631,6 @@ export default function TrainModelPage() {
           </CardContent>
         </Card>
 
-        {/* Training Monitor */}
         <Card className="w-full">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-xl"><List className="h-6 w-6 text-primary" /> Training Monitor</CardTitle>
@@ -964,7 +700,6 @@ export default function TrainModelPage() {
         </Card>
       </div>
 
-      {/* Job History */}
       <Card className="mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl"><List className="h-6 w-6 text-primary" /> Job History</CardTitle>

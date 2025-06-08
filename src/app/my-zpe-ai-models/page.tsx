@@ -35,6 +35,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { adviseHSQNNParameters, type HSQNNAdvisorInput, type HSQNNAdvisorOutput } from "@/ai/flows/hs-qnn-parameter-advisor";
 import { z } from "zod";
+import { HSQNNAdvisor } from "@/components/hs-qnn-advisor";
+import { defaultZPEParams } from "@/lib/constants";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
@@ -788,122 +790,11 @@ export default function MyZpeAiModelsPage() {
         </Dialog>
       )}
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><BrainCircuit className="h-6 w-6 text-primary"/>HS-QNN Advisor</CardTitle>
-          <CardDescription>Get AI-driven advice for the next parameters in your Hilbert Space Quantum Neural Network sequence. (Mini Advisor - experimental)</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="previousJobForAdvisor" className="text-sm font-medium">Select Completed Job for Context</Label>
-            <Select
-              value={selectedJobIdForAdvisor}
-              onValueChange={setSelectedJobIdForAdvisor}
-              disabled={isMiniAdvisorLoadingJobs || completedJobsListForAdvisor.length === 0}
-            >
-              <SelectTrigger id="previousJobForAdvisor">
-                <SelectValue placeholder={
-                  isMiniAdvisorLoadingJobs ? "Loading jobs..." :
-                  completedJobsListForAdvisor.length === 0 ? "No completed jobs available" :
-                  "Select a completed job"
-                } />
-              </SelectTrigger>
-              <SelectContent>
-                {isMiniAdvisorLoadingJobs && <SelectItem value="loading" disabled>Loading...</SelectItem>}
-                {!isMiniAdvisorLoadingJobs && completedJobsListForAdvisor.length === 0 && (
-                  <SelectItem value="no-jobs" disabled>No completed jobs found</SelectItem>
-                )}
-                {completedJobsListForAdvisor.map(job => (
-                  <SelectItem key={job.job_id} value={job.job_id} className="text-sm">
-                    {job.model_name} ({job.job_id.slice(-6)}) - Acc: {job.accuracy.toFixed(2)}%
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {selectedPreviousJobDetailsForAdvisor && (
-            <Card className="bg-muted/30 p-3">
-              <CardHeader className="p-0 pb-2"><CardTitle className="text-sm">Context: {selectedPreviousJobDetailsForAdvisor.parameters.modelName}</CardTitle></CardHeader>
-              <CardContent className="p-0 text-xs space-y-0.5">
-                <ParamArrayDisplay label="ZPE Effects (Final)" values={selectedPreviousJobDetailsForAdvisor.zpe_effects} isSubtle/>
-                <p><strong>Accuracy:</strong> {selectedPreviousJobDetailsForAdvisor.accuracy.toFixed(2)}%</p>
-              </CardContent>
-            </Card>
-          )}
-
-          <div>
-            <Label htmlFor="miniAdvisorObjective" className="text-sm font-medium">HNN Objective for Next Step</Label>
-            <Textarea
-              id="miniAdvisorObjective"
-              value={miniAdvisorObjective}
-              onChange={(e) => setMiniAdvisorObjective(e.target.value)}
-              rows={3}
-              placeholder="e.g., Maximize accuracy while focusing ZPE on layer 3..."
-              className="text-sm"
-            />
-          </div>
-          <Button
-            onClick={handleGetMiniAdvice}
-            disabled={isLoadingMiniAdvisor || !selectedJobIdForAdvisor || !selectedPreviousJobDetailsForAdvisor || (selectedPreviousJobDetailsForAdvisor && selectedPreviousJobDetailsForAdvisor.status !== 'completed')}
-            className="w-full"
-          >
-            {isLoadingMiniAdvisor ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
-            Get HNN Advice
-          </Button>
-
-          {miniAdvisorError && (
-            <Alert variant="destructive" className="text-sm">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Advisor Error</AlertTitle>
-              <AlertDescription>{miniAdvisorError}</AlertDescription>
-            </Alert>
-          )}
-          {miniAdvisorResult && (
-            <div className="space-y-3 pt-3 border-t mt-3">
-              <h3 className="text-md font-semibold">AI Suggested Parameters:</h3>
-              <ScrollArea className="h-32 border rounded-md p-2 bg-background/50 text-xs font-mono">
-                <pre>{JSON.stringify(miniAdvisorResult.suggestedNextTrainingParameters, (key, value) =>
-                    typeof value === 'number' ? parseFloat(value.toFixed(4)) : value, 2)}
-                </pre>
-              </ScrollArea>
-              <h3 className="text-md font-semibold mt-2">Reasoning:</h3>
-              <ScrollArea className="h-24 border rounded-md p-2 bg-background/50 text-xs">
-                <p className="whitespace-pre-wrap">{miniAdvisorResult.reasoning}</p>
-              </ScrollArea>
-              <div className="flex flex-col sm:flex-row gap-2 mt-2">
-                <Button
-                  onClick={() => handleLoadInTrainer(miniAdvisorResult.suggestedNextTrainingParameters, miniAdvisorResult.suggestedNextTrainingParameters.modelName)}
-                  variant="default"
-                  className="flex-1"
-                  disabled={!selectedPreviousJobDetailsForAdvisor}
-                >
-                  <Play className="mr-2 h-4 w-4"/> Apply to Trainer & Continue
-                </Button>
-                {/* <Button // Temporarily hide Save and Download until channel_sizes is fully integrated
-                  onClick={handleDownloadSuggestedParametersFromAdvisor}
-                  variant="outline"
-                  className="flex-1"
-                  disabled={isSubmittingNewConfig}
-                >
-                  <Download className="mr-2 h-4 w-4" /> Download JSON
-                </Button> */}
- {/* <Button // Temporarily hide Save and Download until channel_sizes is fully integrated
- > */}
- <Button // Temporarily hide Save and Download until channel_sizes is fully integrated
-                  onClick={handleSaveSuggestedParametersFromAdvisor}
-                  variant="outline"
-                  className="flex-1"
-                  disabled={isSubmittingNewConfig}
-                >
-                  {isSubmittingNewConfig ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  Save as New Config
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <HSQNNAdvisor
+        onApplyParameters={handleLoadInTrainer}
+        onSaveConfig={handleSaveSuggestedParametersFromAdvisor}
+        className="mt-6"
+      />
 
       <Card className="mt-6 bg-accent/10 border-accent/30">
         <CardHeader>
