@@ -163,6 +163,7 @@ export default function TrainModelPage() {
   const [selectedPreviousJobDetailsForMiniAdvisor, setSelectedPreviousJobDetailsForMiniAdvisor] = useState<TrainingJob | null>(null);
   const [isMiniAdvisorLoadingJobs, setIsMiniAdvisorLoadingJobs] = useState(false);
 
+  const [formKey, setFormKey] = useState(0); // New state variable for the key
   const defaultFormValues: TrainingParameters = {
     modelName: "ZPE-QuantumWeaver-V1",
     totalEpochs: 30,
@@ -179,10 +180,18 @@ export default function TrainModelPage() {
     baseConfigId: undefined,
   };
 
-  const { control, handleSubmit, reset, watch, formState: { errors } } = useForm<TrainingParameters>({
+  const { control, handleSubmit, reset, watch, formState: { errors }, setValue } = useForm<TrainingParameters>({
     resolver: zodResolver(trainingFormSchema),
     defaultValues: defaultFormValues,
   });
+
+ // Debugging useEffect to watch form state changes for array parameters
+  useEffect(() => {
+    const momentum = watch("momentumParams");
+    const strength = watch("strengthParams");
+    const noise = watch("noiseParams");
+    const coupling = watch("couplingParams");
+  }, [watch]); // This effect will re-run whenever watch detects changes in any field
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
@@ -440,39 +449,60 @@ export default function TrainModelPage() {
  previousJobZpeHistoryString: zpeHistoryString, // Add the formatted string
       previousTrainingParameters: validatedPreviousParams,
     };
-  // Call the Genkit flow (assuming adviseHSQNNParameters calls the flow)
-  };
 
-  const handleApplyMiniAdvice = () => {
+    try {
+      const result = await adviseHSQNNParameters(inputForAI);
+      setMiniAdvisorResult(result);
+    } catch (error: any) {
+      console.error("Error getting HNN advice:", error);
+      setMiniAdvisorError("Failed to get HNN advice: " + error.message);
+      toast({ title: "HNN Advice Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsLoadingMiniAdvisor(false);
+    }  };
+
+ // Changed to use setValue for more granular control and better compatibility with react-hook-form for arrays
+ const handleApplyMiniAdvice = () => {
     if (!miniAdvisorResult?.suggestedNextTrainingParameters || !selectedPreviousJobDetailsForMiniAdvisor) {
       toast({ title: "No advice to apply", variant: "destructive" });
       return;
     }
 
-    const currentFormValues = watch();
     const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
+    const previousParams = selectedPreviousJobDetailsForMiniAdvisor.parameters;
 
-    const newFormValues: TrainingParameters = {
+    // Start with defaults
+    let mergedParams: TrainingParameters = {
       ...defaultFormValues,
-      ...currentFormValues,
-      ...selectedPreviousJobDetailsForMiniAdvisor.parameters,
-      ...suggested,
     };
 
-    newFormValues.modelName = suggested.modelName || `${selectedPreviousJobDetailsForMiniAdvisor.parameters.modelName}_adv_${Date.now().toString().slice(-3)}`;
-    newFormValues.baseConfigId = selectedPreviousJobDetailsForMiniAdvisor.job_id;
+    // Override with previous job's parameters
+    mergedParams = {
+      ...mergedParams,
+      ...previousParams,
+    };
 
-    const validationResult = trainingFormSchema.safeParse(newFormValues);
+    // Finally, override with suggested parameters to ensure suggested values take precedence.
+    // Explicitly handle array parameters and specific fields like modelName and baseConfigId.
+    mergedParams = {
+      ...mergedParams,
+      ...suggested,
+      // Ensure modelName is set correctly, prioritizing suggested or creating a new name
+      // based on the previous model name.
+      modelName: suggested.modelName || `${previousParams.modelName}_adv_${Date.now().toString().slice(-3)}`,
+      // Ensure baseConfigId is set to the previous job's ID
+      baseConfigId: selectedPreviousJobDetailsForMiniAdvisor.job_id,
+    };
+
+    const validationResult = trainingFormSchema.safeParse(mergedParams);
 
     if (validationResult.success) {
       reset(validationResult.data);
       toast({ title: "Parameters Applied", description: "Advisor suggestions applied to the form." });
+      setFormKey(prevKey => prevKey + 1); // Increment key to force re-render
     } else {
-      console.error("Validation error applying HNN mini-advice:", validationResult.error.flatten().fieldErrors);
-      let errorSummary = "Error applying advice: ";
-      Object.entries(validationResult.error.flatten().fieldErrors).forEach(([key, messages]) => {
-        if (messages) errorSummary += `${key}: ${messages.join(', ')} `;
-      });
+      console.error("Validation error applying HNN mini-advice:", validationResult.error.errors);
+      let errorSummary = "Error applying advice: " + validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
       toast({ title: "Validation Error on Apply", description: errorSummary, variant: "destructive" });
     }
   };
@@ -733,7 +763,7 @@ export default function TrainModelPage() {
             <CardDescription>Configure your ZPE-enhanced neural network training job.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" key={formKey}> {/* Add key prop here */}
               <Tabs defaultValue="general" className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="general">General</TabsTrigger>
@@ -823,6 +853,11 @@ export default function TrainModelPage() {
                   )}
                   {miniAdvisorResult && (
                     <div className="space-y-2">
+ <Label>Advisor Reasoning</Label>
+                      <pre className="p-2 bg-muted rounded-md text-sm whitespace-pre-wrap overflow-auto max-h-32">
+ {miniAdvisorResult.reasoning || "No reasoning provided."}
+ </pre>
+ <Separator />
                       <Label>Suggested Parameters</Label>
                       <pre className="p-2 bg-muted rounded-md text-sm overflow-auto max-h-32">
                         {JSON.stringify(miniAdvisorResult.suggestedNextTrainingParameters, null, 2)}

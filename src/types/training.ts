@@ -17,17 +17,18 @@ export interface GpuInfo {
 export interface TrainingParameters {
   totalEpochs: number;
   batchSize: number;
-  learningRate: number; 
-  weightDecay: number; 
+  learningRate: number;
+  weightDecay: number;
   momentumParams: number[];
   strengthParams: number[];
   noiseParams: number[];
   couplingParams: number[]; // Added couplingParams
   quantumCircuitSize: number;
-  labelSmoothing: number; 
+  labelSmoothing: number;
   quantumMode: boolean;
   modelName: string;
   baseConfigId?: string | null; // Made optional and allow null
+  channel_sizes?: number[]; // Add this line
 }
 
 export interface TrainingJob {

@@ -1,4 +1,3 @@
-
 "use client";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { TrainingParameters, TrainingJob, TrainingJobSummary } from "@/types/training";
@@ -12,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Slider } from "@/components/ui/slider"; // Keep Slider for create form
-import { Switch } from "@/components/ui/switch"; // Keep Switch for create form
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -45,11 +44,11 @@ interface ZpeAiModelListItem {
   type: "config" | "job";
   status?: TrainingJob["status"];
   accuracy: number;
-  date: string; 
+  date: string;
   parameters: TrainingParameters;
-  jobDetails?: TrainingJobSummary; 
-  configDetails?: SavedModelConfig; 
-  rawItem: TrainingJobSummary | SavedModelConfig; 
+  jobDetails?: TrainingJobSummary;
+  configDetails?: SavedModelConfig;
+  rawItem: TrainingJob | TrainingJobSummary | SavedModelConfig;
 }
 
 const defaultZPEParamsArrays: Required<Pick<TrainingParameters, "momentumParams" | "strengthParams" | "noiseParams" | "couplingParams">> = {
@@ -72,7 +71,6 @@ const initialNewConfigParameters: TrainingParameters = {
   baseConfigId: null,
 };
 
-// Zod schema for validating previous job parameters before sending to AI flow
 const TrainingParametersSchemaForAI = z.object({
   totalEpochs: z.number().int().min(1).max(200),
   batchSize: z.number().int().min(8).max(256),
@@ -86,9 +84,58 @@ const TrainingParametersSchemaForAI = z.object({
   labelSmoothing: z.number().min(0).max(0.5),
   quantumMode: z.boolean(),
   modelName: z.string().min(1),
+ channel_sizes: z.array(z.number().int()).optional(),
   baseConfigId: z.string().nullable().optional(),
 });
 
+interface ZpeHistoryEntry {
+  epoch: number;
+  zpeEffects: number[]; // Keep this line
+  zpe_effects: number[]; // Ensure this line is present
+  loss: number;
+  accuracy: number;
+}
+
+
+function parseLogMessagesToZpeHistory(logMessages: string[] | undefined): ZpeHistoryEntry[] {
+  if (!logMessages) return [];
+
+  const zpeHistory: ZpeHistoryEntry[] = [];
+  const zpeRegex = /ZPE: \[(.*?)\]/;
+  const epochLossAccRegex = /E(\d+) END - TrainL: [\d\.]+, ValAcc: ([\d\.]+)%, ValL: ([\d\.]+)/;
+
+  let currentLoss = 0;
+  let currentAccuracy = 0;
+
+  for (const message of logMessages) {
+    const match = message.match(zpeRegex);
+    if (match) {
+      try {
+        const zpeEffectsString = match[1];
+        const zpeEffects = zpeEffectsString.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        if (zpeHistory.length + 1 > 0 && zpeEffects.length > 0) { // Use length + 1 as epoch counter
+          // We keep both zpeEffects and zpe_effects for now to satisfy interface requirements and AI input
+          zpeHistory.push({
+            epoch: zpeHistory.length + 1, // Assign epoch based on position after encountering ZPE effects
+            zpeEffects: zpeEffects, // Assign zpeEffects here
+            zpe_effects: zpeEffects, // Assign zpeEffects here as well
+            loss: currentLoss,
+            accuracy: currentAccuracy,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to parse ZPE effects string:", match[1], e);
+      }
+    } else {
+      const epochMatch = message.match(epochLossAccRegex);
+      if (epochMatch) {
+        currentLoss = parseFloat(epochMatch[3]);
+      }
+    }
+  }
+
+  return zpeHistory.sort((a, b) => a.epoch - b.epoch);
+}
 
 export default function MyZpeAiModelsPage() {
   const [allItems, setAllItems] = useState<ZpeAiModelListItem[]>([]);
@@ -103,7 +150,6 @@ export default function MyZpeAiModelsPage() {
   const [newConfigParams, setNewConfigParams] = useState<TrainingParameters>(initialNewConfigParameters);
   const [newConfigName, setNewConfigName] = useState<string>("ZPE-Custom-Config");
 
-  // HS-QNN Mini Advisor State
   const [completedJobsListForAdvisor, setCompletedJobsListForAdvisor] = useState<TrainingJobSummary[]>([]);
   const [selectedJobIdForAdvisor, setSelectedJobIdForAdvisor] = useState<string>("");
   const [miniAdvisorObjective, setMiniAdvisorObjective] = useState<string>("Maximize validation accuracy while keeping ZPE effects for all layers between 0.05 and 0.15. Consider a slight increase in learning rate if previous accuracy was high.");
@@ -134,7 +180,7 @@ export default function MyZpeAiModelsPage() {
         status: job.status,
         accuracy: job.accuracy || 0,
         date: job.start_time || new Date(0).toISOString(),
-        parameters: job.jobDetails?.parameters || { ...initialNewConfigParameters, couplingParams: defaultZPEParamsArrays.couplingParams },
+        parameters: initialNewConfigParameters,
         jobDetails: job,
         rawItem: job,
       }));
@@ -145,23 +191,31 @@ export default function MyZpeAiModelsPage() {
         type: "config" as "config",
         accuracy: config.accuracy || 0,
         date: config.date_created,
-        parameters: { // Ensure couplingParams default if missing from backend
+        parameters: {
           ...config.parameters,
           couplingParams: config.parameters.couplingParams || defaultZPEParamsArrays.couplingParams,
         },
         configDetails: config,
         rawItem: config,
       }));
-      
+
       const detailedJobItems = await Promise.all(jobItems.map(async (jobItem) => {
-        if (jobItem.type === 'job' && jobItem.jobDetails) {
+        if (jobItem.type === 'job') {
           try {
             const detailRes = await fetch(`${API_BASE_URL}/status/${jobItem.id}`);
             if (detailRes.ok) {
               const fullJob: TrainingJob = await detailRes.json();
-              return { ...jobItem, parameters: { ...fullJob.parameters, couplingParams: fullJob.parameters.couplingParams || defaultZPEParamsArrays.couplingParams } };
+              const fullJobParameters = fullJob.parameters || initialNewConfigParameters;
+              fullJobParameters.couplingParams = fullJobParameters.couplingParams || defaultZPEParamsArrays.couplingParams;
+              return {
+                ...jobItem,
+                parameters: fullJobParameters,
+                rawItem: fullJob,
+              };
             }
-          } catch (e) { console.error(`Failed to fetch details for job ${jobItem.id}`, e); }
+          } catch (e) {
+            console.error(`Failed to fetch details for job ${jobItem.id}`, e);
+          }
         }
         return jobItem;
       }));
@@ -169,55 +223,43 @@ export default function MyZpeAiModelsPage() {
       const combinedItems = [...detailedJobItems, ...configItems].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setAllItems(combinedItems);
 
-      // Populate advisor job list
-      const completedJobs = combinedItems
+      const completedJobs = detailedJobItems
         .filter(item => item.type === 'job' && item.status === 'completed')
-        .map(item => item.jobDetails!) // We know these are jobs with details
+        .map(item => item.jobDetails as TrainingJobSummary)
         .sort((a, b) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
       setCompletedJobsListForAdvisor(completedJobs);
-      if (completedJobs.length > 0 && !selectedJobIdForAdvisor) {
-        // setSelectedJobIdForAdvisor(completedJobs[0].job_id); // Auto-select later if needed
-      }
 
     } catch (error: any) {
       toast({ title: "Error fetching data", description: error.message, variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
-  }, [selectedJobIdForAdvisor]); // Added selectedJobIdForAdvisor dependency
+  }, []);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-  
+
   useEffect(() => {
     if (selectedJobIdForAdvisor) {
       const fetchDetails = async () => {
-        setIsMiniAdvisorLoadingJobs(true); // Reuse this for fetching specific job details
+        setIsMiniAdvisorLoadingJobs(true);
         setMiniAdvisorResult(null);
         setMiniAdvisorError(null);
         try {
           const response = await fetch(`${API_BASE_URL}/status/${selectedJobIdForAdvisor}`);
-          if (!response.ok) throw new Error(`Failed to fetch details for job ${selectedJobIdForAdvisor}`);
-          const data: TrainingJob = await response.json();
-           if (data.status !== 'completed') {
-            setSelectedPreviousJobDetailsForAdvisor(null);
-            throw new Error(`Job ${selectedJobIdForAdvisor} is not completed. Current status: ${data.status}`);
+          if (!response.ok) {
+            throw new Error("Failed to fetch job details");
           }
-          // Ensure couplingParams is present
-          data.parameters.couplingParams = data.parameters.couplingParams || defaultZPEParamsArrays.couplingParams;
-          setSelectedPreviousJobDetailsForAdvisor(data);
-        } catch (e: any) {
-          setSelectedPreviousJobDetailsForAdvisor(null);
-          setMiniAdvisorError("Failed to fetch selected job details for advisor: " + e.message);
-          toast({ title: "Error fetching job details", description: e.message, variant: "destructive" });
+          const jobDetails: TrainingJob = await response.json();
+          setSelectedPreviousJobDetailsForAdvisor(jobDetails);
+        } catch (error: any) {
+          setMiniAdvisorError(error.message);
         } finally {
           setIsMiniAdvisorLoadingJobs(false);
         }
       };
       fetchDetails();
-    } else {
-      setSelectedPreviousJobDetailsForAdvisor(null);
     }
   }, [selectedJobIdForAdvisor]);
 
@@ -229,21 +271,20 @@ export default function MyZpeAiModelsPage() {
   const handleCreateConfig = async () => {
     setIsSubmittingNewConfig(true);
     try {
-      // Exclude couplingParams for backend Pydantic model
       const { couplingParams, ...paramsForBackend } = newConfigParams;
       const configPayload = {
         name: newConfigName || `ZPE-Config-${Date.now().toString().slice(-4)}`,
         parameters: {
           ...paramsForBackend,
-          modelName: newConfigParams.modelName || newConfigName, 
+          modelName: newConfigParams.modelName || newConfigName,
         },
         use_quantum_noise: newConfigParams.quantumMode,
-        channel_sizes: [64, 128, 256, 512], 
+        channel_sizes: [64, 128, 256, 512],
         date_created: new Date().toISOString(),
-        accuracy: 0, // Default for new config
-        loss: 0,     // Default for new config
+        accuracy: 0,
+        loss: 0,
       };
-      
+
       const response = await fetch(`${API_BASE_URL}/configs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -273,18 +314,17 @@ export default function MyZpeAiModelsPage() {
         modelName: `${itemToClone.parameters.modelName}-Clone-${Date.now().toString().slice(-4)}`,
         baseConfigId: itemToClone.type === 'job' ? itemToClone.id : (itemToClone.configDetails?.id || itemToClone.parameters.baseConfigId),
       };
-      // Exclude couplingParams for backend
       const { couplingParams, ...paramsForBackend } = clonedParamsWithName;
       const configPayload = {
         name: clonedParamsWithName.modelName,
         parameters: paramsForBackend,
         use_quantum_noise: clonedParamsWithName.quantumMode,
-        channel_sizes: itemToClone.configDetails?.channel_sizes || [64,128,256,512],
+        channel_sizes: itemToClone.configDetails?.channel_sizes || [64, 128, 256, 512],
         date_created: new Date().toISOString(),
-        accuracy: itemToClone.type === 'config' ? itemToClone.accuracy : 0, // Carry over accuracy if cloning a config
-        loss: itemToClone.type === 'config' ? (itemToClone.configDetails?.loss || 0) : 0, // Carry over loss
+        accuracy: itemToClone.type === 'config' ? itemToClone.accuracy : 0,
+        loss: itemToClone.type === 'config' ? (itemToClone.configDetails?.loss || 0) : 0,
       };
-      
+
       const response = await fetch(`${API_BASE_URL}/configs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -297,8 +337,7 @@ export default function MyZpeAiModelsPage() {
       }
       await fetchData();
       toast({ title: "Success", description: `Configuration "${configPayload.name}" cloned.` });
-    } catch (error: any)
- {
+    } catch (error: any) {
       console.error("Error cloning item:", error);
       toast({ title: "Error", description: `Failed to clone. ${error.message || ''}`, variant: "destructive" });
     }
@@ -318,8 +357,8 @@ export default function MyZpeAiModelsPage() {
         const errorData = await response.json().catch(() => ({ detail: "Failed to delete, server error." }));
         throw new Error(`Failed to delete configuration: ${response.status} - ${errorData.detail}`);
       }
-      await fetchData(); 
-      setSelectedItem(null); 
+      await fetchData();
+      setSelectedItem(null);
       toast({ title: "Success", description: `Configuration "${configNameToDelete}" deleted.` });
     } catch (error: any) {
       console.error("Error deleting configuration:", error);
@@ -329,39 +368,34 @@ export default function MyZpeAiModelsPage() {
     }
   };
 
-  const handleLoadInTrainer = (item: ZpeAiModelListItem | TrainingParameters, name?: string) => {
-    let paramsToPrefill: TrainingParameters;
-    let modelName: string;
-    let baseId: string | null | undefined;
+  // Explicitly specify the type of the item parameter
+  const handleLoadInTrainer = (item: ZpeAiModelListItem | Partial<TrainingParameters>, name?: string) => {
+ let modelName: string;
+ let baseId: string | null | undefined;
+    let paramsToLoad: TrainingParameters;
 
-    if ('type' in item && (item as ZpeAiModelListItem).type) { // It's a ZpeAiModelListItem
-        const listItem = item as ZpeAiModelListItem;
-        paramsToPrefill = { ...listItem.parameters };
-        modelName = `${listItem.parameters.modelName}_from_${listItem.type}`;
-        baseId = listItem.type === 'config' ? listItem.id : listItem.id; // Job ID or Config ID
-    } else { // It's raw TrainingParameters (from AI advice)
-        paramsToPrefill = { ...item as TrainingParameters };
-        modelName = name || `AI_Advised_Model_${Date.now().toString().slice(-4)}`;
-        baseId = (item as TrainingParameters).baseConfigId;
+    if ('type' in item) {
+      const listItem = item as ZpeAiModelListItem;
+      modelName = `${listItem.parameters.modelName}_from_${listItem.type.replace('config', 'Config').replace('job', 'Job')}`;
+      baseId = listItem.type === 'config' ? listItem.id : listItem.id;
+      paramsToLoad = { ...initialNewConfigParameters, ...listItem.parameters };
+    } else {
+      // item is a partial TrainingParameters object (likely from AI Advisor)
+      const suggestedParams = item as Partial<TrainingParameters>;
+      modelName = name || `AI_Advised_Model_${Date.now().toString().slice(-4)}`;
+      baseId = suggestedParams.baseConfigId;
+      paramsToLoad = {
+        ...initialNewConfigParameters,
+ ...suggestedParams,
+ couplingParams: suggestedParams.couplingParams || defaultZPEParamsArrays.couplingParams, // Ensure couplingParams defaults if not provided
+      };
     }
-    
-    paramsToPrefill.modelName = modelName;
-    paramsToPrefill.baseConfigId = baseId;
 
-    const queryParams = new URLSearchParams();
-    for (const [key, value] of Object.entries(paramsToPrefill)) {
-      if (value !== undefined && value !== null) {
-        if (Array.isArray(value)) {
-          queryParams.append(key, JSON.stringify(value));
-        } else {
-          queryParams.append(key, String(value));
-        }
-      }
-    }
-    router.push(`/train?${queryParams.toString()}`);
-    toast({ title: "Loading in Trainer", description: `Parameters for "${paramsToPrefill.modelName}" pre-filled.` });
+    const encodedParams = btoa(JSON.stringify(paramsToLoad));
+ router.push(`/train?advisedParams=${encodedParams}&name=${encodeURIComponent(modelName)}`);
+ toast({ title: "Loading in Trainer", description: `Parameters for "${paramsToLoad.modelName}" pre-filled.` });
   };
-  
+
   const updateNewConfigParamArray = (paramType: keyof TrainingParameters, index: number, value: number) => {
     setNewConfigParams(prev => {
       const currentParams = prev;
@@ -370,7 +404,7 @@ export default function MyZpeAiModelsPage() {
       if (Array.isArray(paramArray)) {
         const updatedArray = [...paramArray];
         updatedArray[index] = value;
-        return { ...currentParams, [paramType]: updatedArray, };
+        return { ...currentParams, [paramType]: updatedArray };
       }
       return prev;
     });
@@ -394,7 +428,6 @@ export default function MyZpeAiModelsPage() {
     return allItems.filter(item => item.type === typeFilter);
   };
 
-  // HS-QNN Mini Advisor Logic
   const handleGetMiniAdvice = async () => {
     if (!selectedPreviousJobDetailsForAdvisor) {
       toast({ title: "Error", description: "No previous job selected for HNN advice.", variant: "destructive" });
@@ -407,26 +440,35 @@ export default function MyZpeAiModelsPage() {
     setIsLoadingMiniAdvisor(true);
     setMiniAdvisorError(null);
     setMiniAdvisorResult(null);
-    
+
     let validatedPreviousParams: z.infer<typeof TrainingParametersSchemaForAI>;
-      try {
-          const paramsToValidate = {
-              ...initialNewConfigParameters, // Start with full defaults
-              ...selectedPreviousJobDetailsForAdvisor.parameters, // Overlay job's parameters
-              couplingParams: selectedPreviousJobDetailsForAdvisor.parameters.couplingParams || defaultZPEParamsArrays.couplingParams, // Ensure coupling is there
-          };
-          validatedPreviousParams = TrainingParametersSchemaForAI.parse(paramsToValidate);
-      } catch (validationError: any) {
-          console.error("Validation error for previousTrainingParameters (mini advisor):", validationError.flatten().fieldErrors);
-          setMiniAdvisorError("Previous job parameters format error. Check console. " + validationError.message);
-          toast({ title: "Parameter Mismatch", description: "Previous job parameters invalid. " + validationError.message, variant: "destructive" });
-          setIsLoadingMiniAdvisor(false);
-          return;
-      }
+    try {
+      const paramsToValidate = {
+        ...initialNewConfigParameters,
+        ...selectedPreviousJobDetailsForAdvisor.parameters,
+        couplingParams: selectedPreviousJobDetailsForAdvisor.parameters.couplingParams || defaultZPEParamsArrays.couplingParams,
+      };
+      validatedPreviousParams = TrainingParametersSchemaForAI.parse(paramsToValidate);
+    } catch (validationError: any) {
+      console.error("Validation error for previousTrainingParameters (mini advisor):", validationError.flatten().fieldErrors);
+      setMiniAdvisorError("Previous job parameters format error. Check console. " + validationError.message);
+      toast({ title: "Parameter Mismatch", description: "Previous job parameters invalid. " + validationError.message, variant: "destructive" });
+      setIsLoadingMiniAdvisor(false);
+      return;
+    }
+
+    // Use the shared parseLogMessagesToZpeHistory function
+    const zpeHistory = parseLogMessagesToZpeHistory(selectedPreviousJobDetailsForAdvisor.log_messages);
+
+    // Format the zpeHistoryString to match the expected format, including the final accuracy
+    const zpeHistoryString = zpeHistory.map(entry =>
+      `Epoch ${entry.epoch}: ZPE=[${entry.zpe_effects.map(z => z.toFixed(3)).join(', ')}], Loss=${entry.loss.toFixed(4)}, Acc=${entry.accuracy.toFixed(4)}`
+ ).join('\n') + `\nFinal Accuracy: ${selectedPreviousJobDetailsForAdvisor.accuracy.toFixed(4)}%`;
 
     const inputForAI: HSQNNAdvisorInput = {
       previousJobId: selectedPreviousJobDetailsForAdvisor.job_id,
-      previousZpeEffects: selectedPreviousJobDetailsForAdvisor.zpe_effects || Array(6).fill(0),
+      previousJobZpeHistory: zpeHistory,
+ previousJobZpeHistoryString: zpeHistoryString,
       previousTrainingParameters: validatedPreviousParams,
       hnnObjective: miniAdvisorObjective,
     };
@@ -449,57 +491,57 @@ export default function MyZpeAiModelsPage() {
       return;
     }
 
-    const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
-    const { couplingParams, ...paramsForBackend } = suggested; 
+    // Add null check for selectedPreviousJobDetailsForAdvisor before accessing parameters
+    const channelSizes = selectedPreviousJobDetailsForAdvisor ? (selectedPreviousJobDetailsForAdvisor.parameters as TrainingParameters & { channel_sizes?: number[]; }).channel_sizes || [64, 128, 256, 512] : [64, 128, 256, 512];
+
+    const fullParametersForSave: TrainingParameters = {
+      ...initialNewConfigParameters,
+      ...selectedPreviousJobDetailsForAdvisor.parameters,
+      ...miniAdvisorResult.suggestedNextTrainingParameters,
+      couplingParams: miniAdvisorResult.suggestedNextTrainingParameters.couplingParams || selectedPreviousJobDetailsForAdvisor.parameters.couplingParams || defaultZPEParamsArrays.couplingParams,
+      modelName: miniAdvisorResult.suggestedNextTrainingParameters.modelName || `${selectedPreviousJobDetailsForAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
+      baseConfigId: selectedPreviousJobDetailsForAdvisor.job_id,
+    };
+
+    const backendSafeParameters: Omit<TrainingParameters, 'couplingParams'> = {
+      totalEpochs: Number(fullParametersForSave.totalEpochs) || initialNewConfigParameters.totalEpochs,
+      batchSize: Number(fullParametersForSave.batchSize) || initialNewConfigParameters.batchSize,
+      learningRate: Number(fullParametersForSave.learningRate) || initialNewConfigParameters.learningRate,
+      weightDecay: Number(fullParametersForSave.weightDecay) || initialNewConfigParameters.weightDecay,
+      momentumParams: fullParametersForSave.momentumParams,
+      strengthParams: fullParametersForSave.strengthParams,
+      noiseParams: fullParametersForSave.noiseParams,
+      quantumCircuitSize: Number(fullParametersForSave.quantumCircuitSize) || initialNewConfigParameters.quantumCircuitSize,
+      labelSmoothing: Number(fullParametersForSave.labelSmoothing) || initialNewConfigParameters.labelSmoothing,
+      quantumMode: fullParametersForSave.quantumMode,
+      modelName: fullParametersForSave.modelName,
+      baseConfigId: fullParametersForSave.baseConfigId,
+    };
 
     const configToSave = {
-      name: suggested.modelName || `${selectedPreviousJobDetailsForAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-      parameters: {
-        ...initialNewConfigParameters, 
-        ...selectedPreviousJobDetailsForAdvisor.parameters, 
-        ...paramsForBackend, 
-        baseConfigId: selectedPreviousJobDetailsForAdvisor.job_id,
-        modelName: suggested.modelName || `${selectedPreviousJobDetailsForAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-      },
+      name: fullParametersForSave.modelName,
+      parameters: backendSafeParameters,
+      use_quantum_noise: fullParametersForSave.quantumMode || false, // Ensure use_quantum_noise is boolean
+      channel_sizes: selectedPreviousJobDetailsForAdvisor.parameters.channel_sizes || [64, 128, 256, 512], // Correctly access channel_sizes from parameters
       date_created: new Date().toISOString(),
-      accuracy: 0, 
-      loss: 0, 
-      use_quantum_noise: suggested.quantumMode !== undefined ? suggested.quantumMode : selectedPreviousJobDetailsForAdvisor.parameters.quantumMode,
-      channel_sizes: selectedPreviousJobDetailsForAdvisor.configDetails?.channel_sizes || [64, 128, 256, 512],
+      accuracy: 0,
+      loss: 0,
     };
-    
-    // Ensure all required fields from TrainingParameters (backend) are present for parameters field
-    const backendSafeParameters: Omit<TrainingParameters, 'couplingParams'> = {
-        totalEpochs: configToSave.parameters.totalEpochs,
-        batchSize: configToSave.parameters.batchSize,
-        learningRate: configToSave.parameters.learningRate,
-        weightDecay: configToSave.parameters.weightDecay,
-        momentumParams: configToSave.parameters.momentumParams,
-        strengthParams: configToSave.parameters.strengthParams,
-        noiseParams: configToSave.parameters.noiseParams,
-        quantumCircuitSize: configToSave.parameters.quantumCircuitSize,
-        labelSmoothing: configToSave.parameters.labelSmoothing,
-        quantumMode: configToSave.parameters.quantumMode,
-        modelName: configToSave.parameters.modelName,
-        baseConfigId: configToSave.parameters.baseConfigId,
-    };
-    const finalPayloadToSave = {...configToSave, parameters: backendSafeParameters };
 
-
-    setIsSubmittingNewConfig(true); // Reuse submitting state
+    setIsSubmittingNewConfig(true);
     try {
       const response = await fetch(`${API_BASE_URL}/configs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(finalPayloadToSave),
+        body: JSON.stringify(configToSave),
       });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(`Failed to save configuration: ${response.status} ${response.statusText}. ${errorData.detail || ''}`);
       }
       const saved = await response.json();
-      toast({ title: "Configuration Saved", description: `Config "${finalPayloadToSave.name}" (ID: ${saved.config_id.slice(-6)}) saved.` });
-      await fetchData(); // Refresh the main list
+      toast({ title: "Configuration Saved", description: `Config "${configToSave.name}" (ID: ${saved.config_id.slice(-6)}) saved.` });
+      await fetchData();
     } catch (error: any) {
       console.error("Error saving suggested parameters:", error);
       toast({ title: "Save Failed", description: error.message, variant: "destructive" });
@@ -515,18 +557,17 @@ export default function MyZpeAiModelsPage() {
     }
     const suggested = miniAdvisorResult.suggestedNextTrainingParameters;
     const filename = `${suggested.modelName || `advised_params_${Date.now().toString().slice(-4)}`}.json`;
-    
-    // Construct the full TrainingParameters object as the user would expect it for the trainer
+
     const fullSuggestedParams: TrainingParameters = {
-        ...initialNewConfigParameters, // Base defaults
-        ...selectedPreviousJobDetailsForAdvisor.parameters, // Inherit from base job
-        ...suggested, // Overlay AI suggestions (this *will* include couplingParams if suggested by AI)
-        modelName: suggested.modelName || `${selectedPreviousJobDetailsForAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
-        baseConfigId: selectedPreviousJobDetailsForAdvisor.job_id,
+      ...initialNewConfigParameters,
+      ...selectedPreviousJobDetailsForAdvisor.parameters,
+      ...suggested,
+      modelName: suggested.modelName || `${selectedPreviousJobDetailsForAdvisor.parameters.modelName}_advised_${Date.now().toString().slice(-4)}`,
+      baseConfigId: selectedPreviousJobDetailsForAdvisor.job_id,
+      couplingParams: suggested.couplingParams || selectedPreviousJobDetailsForAdvisor.parameters.couplingParams || defaultZPEParamsArrays.couplingParams,
     };
-    
+
     const jsonStr = JSON.stringify(fullSuggestedParams, null, 2);
-    
     const blob = new Blob([jsonStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -539,14 +580,13 @@ export default function MyZpeAiModelsPage() {
     toast({ title: "Parameters Downloaded", description: `Saved as ${filename}` });
   };
 
-
   return (
     <div className="container mx-auto p-4 md:p-6">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between space-y-2 md:space-y-0 mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-2"><ListChecks /> My ZPE-AI Models</h1>
           <p className="text-muted-foreground">Manage saved configurations and review past training job history. Use the HS-QNN advisor for AI-driven parameter suggestions.</p>
-        </div>
+        </div>  
         <div className="flex gap-2">
           <Button onClick={fetchData} variant="outline" disabled={isLoading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} /> Refresh Lists
@@ -563,28 +603,28 @@ export default function MyZpeAiModelsPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2"><Label htmlFor="config-name">Config Name</Label><Input id="config-name" placeholder="e.g., ZPE-ResNet-Variant1" value={newConfigName} onChange={(e) => setNewConfigName(e.target.value)}/></div>
             <div className="space-y-2"><div className="flex items-center justify-between"><Label htmlFor="quantum-noise">Use Quantum Noise</Label><Switch id="quantum-noise" checked={newConfigParams.quantumMode} onCheckedChange={(checked) => setNewConfigParams(p => ({...p, quantumMode: checked}))}/></div></div>
-            
+
             <Tabs defaultValue="general" className="mt-6">
-              <TabsList className="grid grid-cols-3">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="general">General</TabsTrigger>
                 <TabsTrigger value="zpe">ZPE Params</TabsTrigger>
                 <TabsTrigger value="architecture">Architecture</TabsTrigger>
               </TabsList>
               <TabsContent value="general" className="space-y-3 pt-3">
-                 <div className="grid grid-cols-2 gap-4">
-                   <div className="space-y-2"><Label htmlFor="totalEpochs">Total Epochs</Label><Input id="totalEpochs" type="number" value={newConfigParams.totalEpochs} onChange={(e) => setNewConfigParams(p => ({...p, totalEpochs: parseInt(e.target.value,10)||0}))}/></div>
-                   <div className="space-y-2"><Label htmlFor="batchSize">Batch Size</Label><Input id="batchSize" type="number" value={newConfigParams.batchSize} onChange={(e) => setNewConfigParams(p => ({...p, batchSize: parseInt(e.target.value,10)||0}))}/></div>
-                   <div className="space-y-2"><Label htmlFor="learningRate">Learning Rate</Label><Input id="learningRate" type="number" step="0.0001" value={newConfigParams.learningRate} onChange={(e) => setNewConfigParams(p => ({...p, learningRate: parseFloat(e.target.value)||0}))}/></div>
-                   <div className="space-y-2"><Label htmlFor="weightDecay">Weight Decay</Label><Input id="weightDecay" type="number" step="0.0001" value={newConfigParams.weightDecay} onChange={(e) => setNewConfigParams(p => ({...p, weightDecay: parseFloat(e.target.value)||0}))}/></div>
-                   <div className="space-y-2"><Label htmlFor="quantumCircuitSize">Quantum Circuit Size</Label><Input id="quantumCircuitSize" type="number" value={newConfigParams.quantumCircuitSize} onChange={(e) => setNewConfigParams(p => ({...p, quantumCircuitSize: parseInt(e.target.value,10)||0}))}/></div>
-                   <div className="space-y-2"><Label htmlFor="labelSmoothing">Label Smoothing</Label><Input id="labelSmoothing" type="number" step="0.01" value={newConfigParams.labelSmoothing} onChange={(e) => setNewConfigParams(p => ({...p, labelSmoothing: parseFloat(e.target.value)||0}))}/></div>
-                   <div className="space-y-2"><Label htmlFor="modelNameParam">Model Name (Internal)</Label><Input id="modelNameParam" type="text" value={newConfigParams.modelName} onChange={(e) => setNewConfigParams(p => ({...p, modelName: e.target.value}))}/></div>
-                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label htmlFor="totalEpochs">Total Epochs</Label><Input id="totalEpochs" type="number" value={newConfigParams.totalEpochs} onChange={(e) => setNewConfigParams(p => ({...p, totalEpochs: parseInt(e.target.value,10)||0}))}/></div>
+                  <div className="space-y-2"><Label htmlFor="batchSize">Batch Size</Label><Input id="batchSize" type="number" value={newConfigParams.batchSize} onChange={(e) => setNewConfigParams(p => ({...p, batchSize: parseInt(e.target.value,10)||0}))}/></div>
+                  <div className="space-y-2"><Label htmlFor="learningRate">Learning Rate</Label><Input id="learningRate" type="number" step="0.0001" value={newConfigParams.learningRate} onChange={(e) => setNewConfigParams(p => ({...p, learningRate: parseFloat(e.target.value)||0}))}/></div>
+                  <div className="space-y-2"><Label htmlFor="weightDecay">Weight Decay</Label><Input id="weightDecay" type="number" step="0.0001" value={newConfigParams.weightDecay} onChange={(e) => setNewConfigParams(p => ({...p, weightDecay: parseFloat(e.target.value)||0}))}/></div>
+                  <div className="space-y-2"><Label htmlFor="quantumCircuitSize">Quantum Circuit Size</Label><Input id="quantumCircuitSize" type="number" value={newConfigParams.quantumCircuitSize} onChange={(e) => setNewConfigParams(p => ({...p, quantumCircuitSize: parseInt(e.target.value,10)||0}))}/></div>
+                  <div className="space-y-2"><Label htmlFor="labelSmoothing">Label Smoothing</Label><Input id="labelSmoothing" type="number" step="0.01" value={newConfigParams.labelSmoothing} onChange={(e) => setNewConfigParams(p => ({...p, labelSmoothing: parseFloat(e.target.value)||0}))}/></div>
+                  <div className="space-y-2"><Label htmlFor="modelNameParam">Model Name (Internal)</Label><Input id="modelNameParam" type="text" value={newConfigParams.modelName} onChange={(e) => setNewConfigParams(p => ({...p, modelName: e.target.value}))}/></div>
+                </div>
               </TabsContent>
               <TabsContent value="zpe" className="space-y-3 pt-3">
                 {(["momentumParams", "strengthParams", "noiseParams", "couplingParams"] as (keyof TrainingParameters)[]).map((paramKey) => (
                   <div key={paramKey as string} className="space-y-3">
-                    <h4 className="text-sm font-medium capitalize">{paramKey.replace('Params', '')} Params</h4>
+                    <h4 className="text-sm font-medium capitalize">{paramKey.replace('Params', '')} Parameters</h4>
                     {(newConfigParams[paramKey] as number[]).map((value, idx) => (
                       <div key={idx} className="space-y-1">
                         <div className="flex justify-between text-xs"><Label>Layer {idx + 1}</Label><span className="font-mono">{typeof value === 'number' ? value.toFixed(2) : 'N/A'}</span></div>
@@ -594,8 +634,8 @@ export default function MyZpeAiModelsPage() {
                   </div>
                 ))}
               </TabsContent>
-               <TabsContent value="architecture" className="space-y-3 pt-3">
-                  <p className="text-sm text-muted-foreground">Channel sizes are defaulted. This section can be expanded for more architecture controls.</p>
+              <TabsContent value="architecture" className="space-y-3 pt-3">
+                <p className="text-sm text-muted-foreground">Channel sizes are defaulted. This section can be expanded for more architecture controls.</p>
               </TabsContent>
             </Tabs>
           </CardContent>
@@ -709,23 +749,23 @@ export default function MyZpeAiModelsPage() {
                 <p><strong>Learning Rate:</strong> {selectedItem.parameters.learningRate}</p>
                 <p><strong>Weight Decay:</strong> {selectedItem.parameters.weightDecay}</p>
                 <p><strong>Label Smoothing:</strong> {selectedItem.parameters.labelSmoothing}</p>
-                
+
                 <h3 className="font-semibold text-base mt-3 mb-2 border-b pb-1">ZPE Settings</h3>
-                <ParamArrayDisplay label="Momentum Params" values={selectedItem.parameters.momentumParams} />
-                <ParamArrayDisplay label="Strength Params" values={selectedItem.parameters.strengthParams} />
-                <ParamArrayDisplay label="Noise Params" values={selectedItem.parameters.noiseParams} />
-                <ParamArrayDisplay label="Coupling Params" values={selectedItem.parameters.couplingParams} />
-                
+                <ParamArrayDisplay label="Momentum Parameters" values={selectedItem.parameters.momentumParams} />
+                <ParamArrayDisplay label="Strength Parameters" values={selectedItem.parameters.strengthParams} />
+                <ParamArrayDisplay label="Noise Parameters" values={selectedItem.parameters.noiseParams} />
+                <ParamArrayDisplay label="Coupling Parameters" values={selectedItem.parameters.couplingParams} />
+
                 <h3 className="font-semibold text-base mt-3 mb-2 border-b pb-1">Quantum Settings</h3>
                 <p><strong>Quantum Mode:</strong> {selectedItem.parameters.quantumMode ? "Enabled" : "Disabled"}</p>
                 <p><strong>Quantum Circuit Size:</strong> {selectedItem.parameters.quantumCircuitSize} Qubits</p>
 
                 {selectedItem.parameters.baseConfigId && <p className="mt-2"><strong>Base Config ID:</strong> <span className="font-mono text-xs">{selectedItem.parameters.baseConfigId}</span></p>}
-                 <div className="mt-4 pt-4 border-t">
-                    <Button variant="outline" size="sm" onClick={() => {handleLoadInTrainer(selectedItem); setIsDetailModalOpen(false);}}>
-                        <Play className="mr-2 h-4 w-4"/> Load in Trainer
-                    </Button>
-                 </div>
+                <div className="mt-4 pt-4 border-t">
+                  <Button variant="outline" size="sm" onClick={() => {handleLoadInTrainer(selectedItem); setIsDetailModalOpen(false);}}>
+                    <Play className="mr-2 h-4 w-4"/> Load in Trainer
+                  </Button>
+                </div>
               </div>
             </ScrollArea>
             <DialogFooter>
@@ -751,7 +791,7 @@ export default function MyZpeAiModelsPage() {
       <Card className="mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><BrainCircuit className="h-6 w-6 text-primary"/>HS-QNN Advisor</CardTitle>
-          <CardDescription>Get AI-driven advice for the next parameters in your Hilbert Space Quantum Neural Network sequence.</CardDescription>
+          <CardDescription>Get AI-driven advice for the next parameters in your Hilbert Space Quantum Neural Network sequence. (Mini Advisor - experimental)</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
@@ -823,7 +863,7 @@ export default function MyZpeAiModelsPage() {
             <div className="space-y-3 pt-3 border-t mt-3">
               <h3 className="text-md font-semibold">AI Suggested Parameters:</h3>
               <ScrollArea className="h-32 border rounded-md p-2 bg-background/50 text-xs font-mono">
-                <pre>{JSON.stringify(miniAdvisorResult.suggestedNextTrainingParameters, (key, value) => 
+                <pre>{JSON.stringify(miniAdvisorResult.suggestedNextTrainingParameters, (key, value) =>
                     typeof value === 'number' ? parseFloat(value.toFixed(4)) : value, 2)}
                 </pre>
               </ScrollArea>
@@ -832,30 +872,32 @@ export default function MyZpeAiModelsPage() {
                 <p className="whitespace-pre-wrap">{miniAdvisorResult.reasoning}</p>
               </ScrollArea>
               <div className="flex flex-col sm:flex-row gap-2 mt-2">
-                <Button 
-                    onClick={() => handleLoadInTrainer(miniAdvisorResult.suggestedNextTrainingParameters, miniAdvisorResult.suggestedNextTrainingParameters.modelName)} 
-                    variant="default" 
-                    className="flex-1"
-                    disabled={!selectedPreviousJobDetailsForAdvisor}
+                <Button
+                  onClick={() => handleLoadInTrainer(miniAdvisorResult.suggestedNextTrainingParameters, miniAdvisorResult.suggestedNextTrainingParameters.modelName)}
+                  variant="default"
+                  className="flex-1"
+                  disabled={!selectedPreviousJobDetailsForAdvisor}
                 >
                   <Play className="mr-2 h-4 w-4"/> Apply to Trainer & Continue
                 </Button>
-                <Button 
-                    onClick={handleDownloadSuggestedParametersFromAdvisor} 
-                    variant="outline" 
-                    className="flex-1"
-                    disabled={isSubmittingNewConfig}
+                {/* <Button // Temporarily hide Save and Download until channel_sizes is fully integrated
+                  onClick={handleDownloadSuggestedParametersFromAdvisor}
+                  variant="outline"
+                  className="flex-1"
+                  disabled={isSubmittingNewConfig}
                 >
                   <Download className="mr-2 h-4 w-4" /> Download JSON
-                </Button>
-                <Button 
-                    onClick={handleSaveSuggestedParametersFromAdvisor} 
-                    variant="outline" 
-                    className="flex-1"
-                    disabled={isSubmittingNewConfig}
+                </Button> */}
+ {/* <Button // Temporarily hide Save and Download until channel_sizes is fully integrated
+ > */}
+ <Button // Temporarily hide Save and Download until channel_sizes is fully integrated
+                  onClick={handleSaveSuggestedParametersFromAdvisor}
+                  variant="outline"
+                  className="flex-1"
+                  disabled={isSubmittingNewConfig}
                 >
                   {isSubmittingNewConfig ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                   Save as New Config
+                  Save as New Config
                 </Button>
               </div>
             </div>
@@ -863,16 +905,15 @@ export default function MyZpeAiModelsPage() {
         </CardContent>
       </Card>
 
-
-       <Card className="mt-6 bg-accent/10 border-accent/30">
+      <Card className="mt-6 bg-accent/10 border-accent/30">
         <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg"><Info className="h-5 w-5 text-accent-foreground/80"/>Understanding "My ZPE-AI Models"</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-lg"><Info className="h-5 w-5 text-accent-foreground/80"/>Understanding "My ZPE-AI Models"</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-accent-foreground/80 space-y-2">
-            <p>This page unifies your saved configurations and training job history.</p>
-            <p><strong>Saved Configurations:</strong> Parameter sets you've created or cloned. Load them into the trainer, clone, or delete.</p>
-            <p><strong>Job History:</strong> Records of past training runs. View parameters and load them into the trainer for a new run.</p>
-            <p><strong>HS-QNN Advisor:</strong> Select a completed job and specify an objective. The AI will suggest parameters for your next HNN step. You can then apply these to the trainer, save them as a new configuration, or download them.</p>
+          <p>This page unifies your saved configurations and training job history.</p>
+          <p><strong>Saved Configurations:</strong> Parameter sets you've created or cloned. Load them into the trainer, clone, or delete.</p>
+          <p><strong>Job History:</strong> Records of past training runs. View parameters and load them into the trainer for a new run.</p>
+          <p><strong>HS-QNN Advisor:</strong> Select a completed job and specify an objective. The AI will suggest parameters for your next HNN step. You can then apply these to the trainer, save them as a new configuration, or download them.</p>
         </CardContent>
       </Card>
     </div>

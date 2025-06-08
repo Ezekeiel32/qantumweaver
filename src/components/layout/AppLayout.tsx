@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  PanelLeft, Home, Cpu, Zap, Atom, BarChart3, PlayCircle, Lightbulb, 
+ PanelLeft, Home, Cpu, Zap, Atom, BarChart3, PlayCircle, Lightbulb, 
   Replace, Cog, Scaling, Box, Share2, Wrench, Moon, Sun, BrainCircuit, Globe, 
   ScatterChart, IterationCw, MessageSquare, Signal, SlidersHorizontal, Monitor, TrendingUp, Wand2, Rocket, ArrowRight, Settings2, ListChecks
 } from "lucide-react";
@@ -175,7 +175,7 @@ const AppSidebarContent = () => {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton variant="ghost" onClick={toggleDarkMode} className="w-full justify-start text-sm">
+          <SidebarMenuButton variant="outline" onClick={toggleDarkMode} className="w-full justify-start text-sm">
               {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               <span className="group-data-[state=collapsed]:hidden">
                 {isDarkMode ? "Light Mode" : "Dark Mode"}

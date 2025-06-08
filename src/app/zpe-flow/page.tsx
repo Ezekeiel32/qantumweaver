@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -20,7 +20,6 @@ import { BrainCircuit, Lightbulb, Terminal, Wand2, ArrowRight, RefreshCw, Slider
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
-// Define TrainingParametersSchema locally for client-side validation
 const TrainingParametersSchema = z.object({
   totalEpochs: z.number().int().min(1).max(200),
   batchSize: z.number().int().min(8).max(256),
@@ -37,11 +36,58 @@ const TrainingParametersSchema = z.object({
   baseConfigId: z.string().nullable().optional(),
 });
 
-// Define HSQNNAdvisorInputSchema locally for client-side validation
 const HSQNNAdvisorInputSchemaClient = z.object({
   previousJobId: z.string().min(1, "Please select a previous job."),
   hnnObjective: z.string().min(20, "Objective must be at least 20 characters long.").max(500, "Objective is too long."),
 });
+
+interface ZpeHistoryEntry {
+  epoch: number;
+  zpeEffects: number[];
+  zpe_effects: number[];
+  loss: number;
+  accuracy: number;
+}
+
+function parseLogMessagesToZpeHistory(logMessages: string[] | undefined): ZpeHistoryEntry[] {
+  if (!logMessages) return [];
+
+  const zpeHistory: ZpeHistoryEntry[] = [];
+  const zpeRegex = /ZPE: \[(.*?)\]/;
+  const epochLossAccRegex = /E(\d+) END - TrainL: [\d\.]+, ValAcc: ([\d\.]+)%, ValL: ([\d\.]+)/;
+
+  let currentLoss = 0;
+  let currentAccuracy = 0;
+
+  for (const message of logMessages) {
+    const match = message.match(zpeRegex);
+    if (match) {
+      try {
+        const zpeEffectsString = match[1];
+        const zpeEffects = zpeEffectsString.split(',').map((s: string) => parseFloat(s.trim())).filter((n) => !isNaN(n));
+        if (zpeHistory.length + 1 > 0 && zpeEffects.length > 0) {
+          zpeHistory.push({
+            epoch: zpeHistory.length + 1,
+            zpeEffects: zpeEffects,
+            zpe_effects: zpeEffects,
+            loss: currentLoss,
+            accuracy: currentAccuracy,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to parse ZPE effects string:", match[1], e);
+      }
+    } else {
+      const epochMatch = message.match(epochLossAccRegex);
+      if (epochMatch) {
+        currentLoss = parseFloat(epochMatch[3]);
+        currentAccuracy = parseFloat(epochMatch[2]);
+      }
+    }
+  }
+
+  return zpeHistory.sort((a, b) => a.epoch - b.epoch);
+}
 
 type AdvisorFormValues = z.infer<typeof HSQNNAdvisorInputSchemaClient>;
 
@@ -76,12 +122,12 @@ export default function HSQNNParameterAdvisorPage() {
       const completedJobs = (data.jobs || []).filter((job: TrainingJobSummary) => job.status === "completed")
         .sort((a: TrainingJobSummary, b: TrainingJobSummary) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
       setJobsList(completedJobs);
-      
+
       const preselectJobId = searchParams.get("jobId");
-      if (preselectJobId && completedJobs.find(j => j.job_id === preselectJobId)) {
+      if (preselectJobId && completedJobs.find((j: TrainingJobSummary) => j.job_id === preselectJobId)) {
         setValue("previousJobId", preselectJobId);
-      } else if (completedJobs.length > 0 && !watchedJobId) { 
-         setValue("previousJobId", completedJobs[0].job_id); 
+      } else if (completedJobs.length > 0 && !watchedJobId) {
+        setValue("previousJobId", completedJobs[0].job_id);
       }
     } catch (e: any) {
       setError("Failed to fetch jobs: " + e.message);
@@ -99,7 +145,7 @@ export default function HSQNNParameterAdvisorPage() {
     if (watchedJobId) {
       const fetchJobDetails = async () => {
         setIsLoading(true);
-        setAdviceResult(null); 
+        setAdviceResult(null);
         setError(null);
         try {
           const response = await fetch(`${API_BASE_URL}/status/${watchedJobId}`);
@@ -117,7 +163,7 @@ export default function HSQNNParameterAdvisorPage() {
       fetchJobDetails();
     } else {
       setSelectedJobDetails(null);
-      setAdviceResult(null); 
+      setAdviceResult(null);
     }
   }, [watchedJobId]);
 
@@ -126,7 +172,7 @@ export default function HSQNNParameterAdvisorPage() {
       toast({ title: "Error", description: "Previous job details not loaded. Please select a job.", variant: "destructive" });
       return;
     }
-    if (selectedJobDetails.status !== 'completed') {
+    if (selectedJobDetails.status !== "completed") {
       toast({ title: "Invalid Job", description: "Please select a 'completed' job for HNN advice.", variant: "destructive" });
       return;
     }
@@ -137,37 +183,46 @@ export default function HSQNNParameterAdvisorPage() {
 
     let validatedPreviousParams: TrainingParameters;
     try {
-        const paramsToValidate = {
-            ...selectedJobDetails.parameters,
-            totalEpochs: selectedJobDetails.parameters.totalEpochs || 0,
-            batchSize: selectedJobDetails.parameters.batchSize || 0,
-            learningRate: selectedJobDetails.parameters.learningRate || 0,
-            weightDecay: selectedJobDetails.parameters.weightDecay || 0,
-            momentumParams: selectedJobDetails.parameters.momentumParams || Array(6).fill(0),
-            strengthParams: selectedJobDetails.parameters.strengthParams || Array(6).fill(0),
-            noiseParams: selectedJobDetails.parameters.noiseParams || Array(6).fill(0),
-            couplingParams: selectedJobDetails.parameters.couplingParams || Array(6).fill(0),
-            quantumCircuitSize: selectedJobDetails.parameters.quantumCircuitSize || 0,
-            labelSmoothing: selectedJobDetails.parameters.labelSmoothing || 0,
-            quantumMode: selectedJobDetails.parameters.quantumMode || false,
-            modelName: selectedJobDetails.parameters.modelName || "DefaultModel",
-            ...(selectedJobDetails.parameters.baseConfigId !== null && selectedJobDetails.parameters.baseConfigId !== undefined
-                ? { baseConfigId: selectedJobDetails.parameters.baseConfigId }
-                : {}),
-        };
-        validatedPreviousParams = TrainingParametersSchema.parse(paramsToValidate);
+      const paramsToValidate = {
+        ...selectedJobDetails.parameters,
+        totalEpochs: selectedJobDetails.parameters.totalEpochs || 0,
+        batchSize: selectedJobDetails.parameters.batchSize || 0,
+        learningRate: selectedJobDetails.parameters.learningRate || 0,
+        weightDecay: selectedJobDetails.parameters.weightDecay || 0,
+        momentumParams: selectedJobDetails.parameters.momentumParams || Array(6).fill(0),
+        strengthParams: selectedJobDetails.parameters.strengthParams || Array(6).fill(0),
+        noiseParams: selectedJobDetails.parameters.noiseParams || Array(6).fill(0),
+        couplingParams: selectedJobDetails.parameters.couplingParams || Array(6).fill(0),
+        quantumCircuitSize: selectedJobDetails.parameters.quantumCircuitSize || 0,
+        labelSmoothing: selectedJobDetails.parameters.labelSmoothing || 0,
+        quantumMode: selectedJobDetails.parameters.quantumMode || false,
+        modelName: selectedJobDetails.parameters.modelName || "DefaultModel",
+        ...(selectedJobDetails.parameters.baseConfigId !== null && selectedJobDetails.parameters.baseConfigId !== undefined
+          ? { baseConfigId: selectedJobDetails.parameters.baseConfigId }
+          : {}),
+      };
+      validatedPreviousParams = TrainingParametersSchema.parse(paramsToValidate);
     } catch (validationError: any) {
-        console.error("Validation error for previousTrainingParameters:", validationError);
-        setError("Previous job parameters are not in the expected format. Check console for details. Error: " + validationError.message);
-        toast({ title: "Parameter Mismatch", description: "Previous job parameters are not in the expected format. " + validationError.message, variant: "destructive" });
-        setIsLoading(false);
-        return;
+      console.error("Validation error for previousTrainingParameters:", validationError);
+      setError("Previous job parameters are not in the expected format. Check console for details. Error: " + validationError.message);
+      toast({ title: "Parameter Mismatch", description: `Previous job parameters are not in the expected format: ${validationError.message}`, variant: "destructive" });
+      setIsLoading(false);
+      return;
     }
-    
-    const inputForAI: HSQNNAdvisorInput = { 
+
+    const zpeHistory = parseLogMessagesToZpeHistory(selectedJobDetails.log_messages);
+    const zpeHistoryString = zpeHistory
+      .map(
+        (entry) =>
+          `Epoch ${entry.epoch}: ZPE=[${entry.zpe_effects.map((z) => z.toFixed(3)).join(", ")}], Loss=${entry.loss.toFixed(4)}, Acc=${entry.accuracy.toFixed(4)}`
+      )
+      .join("\n");
+
+    const inputForAI: HSQNNAdvisorInput = {
       previousJobId: selectedJobDetails.job_id,
-      previousZpeEffects: selectedJobDetails.zpe_effects || Array(6).fill(0),
-      previousTrainingParameters: validatedPreviousParams, 
+      previousJobZpeHistory: zpeHistory,
+      previousJobZpeHistoryString: `${zpeHistoryString}\nFinal Accuracy: ${selectedJobDetails.accuracy.toFixed(4)}%`,
+      previousTrainingParameters: validatedPreviousParams,
       hnnObjective: data.hnnObjective,
     };
 
@@ -185,74 +240,58 @@ export default function HSQNNParameterAdvisorPage() {
 
   const handleUseParameters = () => {
     if (adviceResult?.suggestedNextTrainingParameters && selectedJobDetails) {
-      const baseParams = { ...selectedJobDetails.parameters };
       const suggestedParams = adviceResult.suggestedNextTrainingParameters;
-      
-      const combinedParams: Partial<TrainingParameters> = { ...baseParams };
-
-      for (const key in suggestedParams) {
-        if (Object.prototype.hasOwnProperty.call(suggestedParams, key)) {
-          (combinedParams as any)[key] = (suggestedParams as any)[key];
-        }
-      }
-      
-      if (suggestedParams.modelName) {
-        combinedParams.modelName = suggestedParams.modelName;
-      } else if (baseParams.modelName) {
-        combinedParams.modelName = `${baseParams.modelName}_hnn_${Date.now().toString().slice(-4)}`;
-      } else {
-        combinedParams.modelName = `HNN_Model_${Date.now().toString().slice(-4)}`;
-      }
-      combinedParams.baseConfigId = selectedJobDetails.job_id;
-
-      const queryParams = new URLSearchParams();
-      for (const [key, value] of Object.entries(combinedParams)) {
-        if (value !== undefined && value !== null) { 
-          if (Array.isArray(value)) {
-            queryParams.append(key, JSON.stringify(value));
-          } else {
-            queryParams.append(key, String(value));
-          }
-        }
-      }
-      router.push(`/train?${queryParams.toString()}`);
+      const encodedParams = btoa(JSON.stringify(suggestedParams));
+ const modelName = suggestedParams.modelName || "AdvisedModel";
+      router.push(`/train?advisedParams=${encodedParams}&name=${encodeURIComponent(modelName)}`);
+      toast({ title: "Loading in Trainer", description: `Parameters for "${suggestedParams.modelName || "AdvisedModel"}" pre-filled.` });
     }
   };
-  
-  const ParamList = ({ params, title }: { params: Partial<TrainingParameters> | TrainingParameters | undefined, title: string }) => {
+
+  const ParamList = ({ params, title }: { params: Partial<TrainingParameters> | TrainingParameters | undefined; title: string }) => {
     if (!params || Object.keys(params).length === 0) {
       let message = `${title}: No parameters to display or not applicable.`;
-       if (title === "Suggested Changes" && selectedJobDetails && (!params || Object.keys(params).length === 0)) {
+      if (title === "Suggested Changes" && selectedJobDetails && (!params || Object.keys(params).length === 0)) {
         message = `${title}: No specific changes suggested beyond inheriting from the previous job. A new model name and baseConfigId will be set.`;
       }
       return <p className="text-sm text-muted-foreground italic">{message}</p>;
     }
 
     const orderedKeys: (keyof TrainingParameters)[] = [
-        "modelName", "totalEpochs", "batchSize", "learningRate", "weightDecay", 
-        "labelSmoothing", "quantumMode", "quantumCircuitSize",
-        "momentumParams", "strengthParams", "noiseParams", "couplingParams",
-        "baseConfigId"
+      "modelName",
+      "totalEpochs",
+      "batchSize",
+      "learningRate",
+      "weightDecay",
+      "labelSmoothing",
+      "quantumMode",
+      "quantumCircuitSize",
+      "momentumParams",
+      "strengthParams",
+      "noiseParams",
+      "couplingParams",
+      "baseConfigId",
     ];
 
     return (
       <div className="space-y-1 text-sm">
-         <h4 className="font-semibold text-muted-foreground">{title}:</h4>
-         <ul className="list-disc list-inside pl-4 space-y-1 bg-background/50 p-2 rounded">
-            {orderedKeys.map((key) => {
-              const value = params[key];
-              if (value === undefined || value === null) return null;
-              if (title === "Suggested Changes" && key === "baseConfigId" && value === selectedJobDetails?.job_id) return null;
-              if (title === "Suggested Changes" && key === "modelName" && value === selectedJobDetails?.parameters.modelName && !adviceResult?.suggestedNextTrainingParameters?.modelName) return null;
+        <h4 className="font-semibold text-muted-foreground">{title}:</h4>
+        <ul className="list-disc list-inside pl-4 space-y-1 bg-background/50 p-2 rounded">
+          {orderedKeys.map((key) => {
+            const value = params[key];
+            if (value === undefined || value === null) return null;
+            if (title === "Suggested Changes" && key === "baseConfigId" && value === selectedJobDetails?.job_id) return null;
+            if (title === "Suggested Changes" && key === "modelName" && value === selectedJobDetails?.parameters.modelName && !adviceResult?.suggestedNextTrainingParameters?.modelName)
+              return null;
 
-              return (
-                <li key={key}>
-                  <span className="font-medium">{key}:</span>{' '}
-                  {Array.isArray(value) ? `[${value.map(v => typeof v === 'number' ? v.toFixed(4) : String(v)).join(', ')}]` : String(value)}
-                </li>
-              );
-            })}
-         </ul>
+            return (
+              <li key={key}>
+                <span className="font-medium">{key}:</span>{" "}
+                {Array.isArray(value) ? `[${value.map((v) => (typeof v === "number" ? v.toFixed(4) : String(v))).join(", ")}]` : String(value)}
+              </li>
+            );
+          })}
+        </ul>
       </div>
     );
   };
@@ -261,16 +300,21 @@ export default function HSQNNParameterAdvisorPage() {
     <div className="container mx-auto p-4 md:p-6">
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><BrainCircuit className="h-6 w-6 text-primary" />HS-QNN Parameter Advisor</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <BrainCircuit className="h-6 w-6 text-primary" />
+            HS-QNN Parameter Advisor
+          </CardTitle>
           <CardDescription>
-            Get AI-driven advice for the next training parameters in your Hilbert Space Quantum Neural Network sequence based on a previous job&apos;s ZPE state and your objectives.
+            Get AI-driven advice for the next training parameters in your Hilbert Space Quantum Neural Network sequence based on a previous job's ZPE state and your objectives.
           </CardDescription>
         </CardHeader>
       </Card>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-1">
-          <CardHeader><CardTitle>Input Configuration</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Input Configuration</CardTitle>
+          </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
               <div>
@@ -286,7 +330,7 @@ export default function HSQNNParameterAdvisorPage() {
                       <SelectContent>
                         {isLoadingJobs && <SelectItem value="loading" disabled>Loading jobs...</SelectItem>}
                         {!isLoadingJobs && jobsList.length === 0 && <SelectItem value="no-jobs" disabled>No completed jobs found.</SelectItem>}
-                        {jobsList.map(job => (
+                        {jobsList.map((job: TrainingJobSummary) => (
                           <SelectItem key={job.job_id} value={job.job_id}>
                             {job.model_name} ({job.job_id.slice(-8)}) - Acc: {job.accuracy.toFixed(2)}%
                           </SelectItem>
@@ -300,17 +344,27 @@ export default function HSQNNParameterAdvisorPage() {
 
               {selectedJobDetails && (
                 <Card className="bg-muted/50">
-                  <CardHeader className="pb-2 pt-4"><CardTitle className="text-base">Previous Job Summary</CardTitle></CardHeader>
+                  <CardHeader className="pb-2 pt-4">
+                    <CardTitle className="text-base">Previous Job Summary</CardTitle>
+                  </CardHeader>
                   <CardContent className="text-sm space-y-1">
-                    <p><strong>Model:</strong> {selectedJobDetails.parameters.modelName}</p>
-                    <p><strong>Accuracy:</strong> {selectedJobDetails.accuracy.toFixed(2)}%</p>
-                    <p><strong>Loss:</strong> {selectedJobDetails.loss.toFixed(4)}</p>
-                    <p><strong>ZPE Effects (avg):</strong> [{selectedJobDetails.zpe_effects?.map(z => z.toFixed(3)).join(', ') || 'N/A'}]</p>
-                     <details className="mt-2">
-                        <summary className="cursor-pointer text-xs text-muted-foreground hover:underline">View All Previous Parameters</summary>
-                        <ScrollArea className="h-32 mt-1 border p-2 rounded-md bg-background">
-                           <ParamList params={selectedJobDetails.parameters} title="Previous Parameters"/>
-                        </ScrollArea>
+                    <p>
+                      <strong>Model:</strong> {selectedJobDetails.parameters.modelName}
+                    </p>
+                    <p>
+                      <strong>Accuracy:</strong> {selectedJobDetails.accuracy.toFixed(2)}%
+                    </p>
+                    <p>
+                      <strong>Loss:</strong> {selectedJobDetails.loss.toFixed(4)}
+                    </p>
+                    <p>
+                      <strong>ZPE Effects (avg):</strong> [{selectedJobDetails.zpe_effects?.map((z) => z.toFixed(3)).join(", ")}]
+                    </p>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs text-muted-foreground hover:underline">View All Previous Parameters</summary>
+                      <ScrollArea className="h-32 mt-1 border p-2 rounded-md bg-background">
+                        <ParamList params={selectedJobDetails.parameters} title="Previous Parameters" />
+                      </ScrollArea>
                     </details>
                   </CardContent>
                 </Card>
@@ -334,8 +388,12 @@ export default function HSQNNParameterAdvisorPage() {
                 {errors.hnnObjective && <p className="text-xs text-destructive mt-1">{errors.hnnObjective.message}</p>}
               </div>
 
-              <Button type="submit" className="w-full" disabled={isLoading || !selectedJobDetails || (selectedJobDetails && selectedJobDetails.status !== 'completed')}>
-                {isLoading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin"/> : <Wand2 className="mr-2 h-4 w-4" />}
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={isLoading || !selectedJobDetails || (selectedJobDetails && selectedJobDetails.status !== "completed")}
+              >
+                {isLoading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
                 Get HNN Advice
               </Button>
             </form>
@@ -344,7 +402,10 @@ export default function HSQNNParameterAdvisorPage() {
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Lightbulb className="h-5 w-5 text-primary"/>AI Generated Advice</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Lightbulb className="h-5 w-5 text-primary" />
+              AI Generated Advice
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             {error && (
@@ -355,33 +416,43 @@ export default function HSQNNParameterAdvisorPage() {
               </Alert>
             )}
             {!isLoading && !adviceResult && !error && (
-              <p className="text-muted-foreground text-center py-10">Submit configuration to get AI advice for the next HNN step.</p>
+              <>
+                <p className="text-muted-foreground text-center py-10">Submit configuration to get AI advice for the next HNN step.</p>
+              </>
             )}
             {adviceResult && (
               <>
                 <Card>
-                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><SlidersHorizontal className="h-5 w-5"/>Suggested Parameter Changes</CardTitle></CardHeader>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <SlidersHorizontal className="h-5 w-5" />
+                      Suggested Parameter Changes
+                    </CardTitle>
+                  </CardHeader>
                   <CardContent>
                     <ScrollArea className="max-h-60">
-                      <ParamList params={adviceResult.suggestedNextTrainingParameters} title="Suggested Changes"/>
-                       <p className="text-xs text-muted-foreground mt-2">
-                        Note: AI suggested changes are shown. Other parameters will typically be inherited.
-                        A new model name ({adviceResult.suggestedNextTrainingParameters?.modelName || `${selectedJobDetails?.parameters?.modelName}_hnn_${Date.now().toString().slice(-4)}`}) and baseConfigId will be set.
+                      <ParamList params={adviceResult.suggestedNextTrainingParameters} title="Suggested Changes" />
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Note: AI suggested changes are shown. Other parameters will typically be inherited. A new model name (
+                        {adviceResult.suggestedNextTrainingParameters?.modelName ||
+                          `${selectedJobDetails?.parameters?.modelName}_hnn_${Date.now().toString().slice(-4)}`}) and baseConfigId will be set.
                       </p>
                     </ScrollArea>
                   </CardContent>
-                   <CardFooter>
-                    <Button 
-                      onClick={handleUseParameters} 
+                  <CardFooter>
+                    <Button
+                      onClick={handleUseParameters}
                       className="w-full"
                       disabled={!selectedJobDetails || !adviceResult?.suggestedNextTrainingParameters}
                     >
-                      <ArrowRight className="mr-2 h-4 w-4"/> Use these parameters in Train Model
+                      <ArrowRight className="mr-2 h-4 w-4" /> Use these parameters in Train Model
                     </Button>
                   </CardFooter>
                 </Card>
                 <Card>
-                  <CardHeader><CardTitle className="text-lg">Reasoning from AI</CardTitle></CardHeader>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Reasoning from AI</CardTitle>
+                  </CardHeader>
                   <CardContent>
                     <ScrollArea className="h-48">
                       <p className="text-sm whitespace-pre-wrap">{adviceResult.reasoning}</p>
@@ -396,4 +467,3 @@ export default function HSQNNParameterAdvisorPage() {
     </div>
   );
 }
-
