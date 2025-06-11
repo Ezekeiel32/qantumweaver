@@ -150,3 +150,28 @@ html.dark .p5Canvas {
 .font-code {
   font-family: var(--font-source-code-pro), monospace;
 }
+
+/* Custom dark sleek scrollbars for all scrollable areas */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: hsl(var(--muted));
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary));
+}
+::-webkit-scrollbar-corner {
+  background: hsl(var(--muted));
+}
+
+/* For Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) hsl(var(--muted));
+}

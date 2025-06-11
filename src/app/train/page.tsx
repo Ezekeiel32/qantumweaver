@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/hooks/use-toast";
-import { Play, StopCircle, List, Zap, Settings, RefreshCw, AlertTriangle, ExternalLink, SlidersHorizontal, Atom, Brain, Waves, BrainCircuit, Wand2, Save, Download } from "lucide-react";
+import { Play, StopCircle, List, Zap, Settings, RefreshCw, AlertTriangle, ExternalLink, SlidersHorizontal, Atom, Brain, Waves, BrainCircuit, Wand2, Save, Download, ArrowDownCircle, PlayCircle } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -24,8 +24,7 @@ import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { adviseHSQNNParameters, type HSQNNAdvisorInput, type HSQNNAdvisorOutput } from "@/ai/flows/hs-qnn-parameter-advisor";
-import { HSQNNAdvisor } from "@/components/hs-qnn-advisor";
+import { TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { defaultZPEParams } from "@/lib/constants";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
@@ -137,6 +136,22 @@ const MetricDisplay = ({ label, value }: { label: string; value: string | number
   </div>
 );
 
+// Utility to save ZPE stats/logs to persistent storage for advisor
+function saveZpeStatsToDataset(jobId: string, logs: string[], zpeHistory: Array<{ epoch: number; zpe_effects: number[] }>) {
+  try {
+    const key = 'zpeStatsDataset';
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    // Avoid duplicates by jobId and epoch
+    const newEntries = zpeHistory.map(h => ({ jobId, epoch: h.epoch, zpe_effects: h.zpe_effects }));
+    const filtered = newEntries.filter(entry => !existing.some((e: any) => e.jobId === entry.jobId && e.epoch === entry.epoch));
+    if (filtered.length > 0) {
+      localStorage.setItem(key, JSON.stringify([...existing, ...filtered]));
+    }
+  } catch (e) {
+    // Ignore storage errors
+  }
+}
+
 export default function TrainModelPage() {
   const [activeJob, setActiveJob] = useState<TrainingJob | null>(null);
   const [jobsList, setJobsList] = useState<TrainingJobSummary[]>([]);
@@ -145,6 +160,12 @@ export default function TrainModelPage() {
   const [chartData, setChartData] = useState<any[]>([]);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const isPollingRef = useRef<boolean>(false);
+  const [isMonitorLoading, setIsMonitorLoading] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [continueFromJobId, setContinueFromJobId] = useState<string | null>(null);
+  const [jobToPrefill, setJobToPrefill] = useState<TrainingJob | null>(null);
+  const [trainMode, setTrainMode] = useState<'new' | 'continue'>('new');
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -205,21 +226,14 @@ export default function TrainModelPage() {
   }, []);
 
   const pollJobStatus = useCallback(async (jobId: string, isInitialLoad = false) => {
-    if (isPollingRef.current && !isInitialLoad && activeJob?.job_id !== jobId) {
-      console.log(`Polling skipped for job ${jobId.replace('zpe_job_','')}: Another job is being polled or this is not the active job.`);
-      return;
-    }
-
+    if (currentJobId !== jobId) return;
     try {
       const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch job status for ${jobId}`);
       }
       const jobData: TrainingJob = await response.json();
-
-      if (isInitialLoad || activeJob?.job_id === jobId) {
         setActiveJob(jobData);
-
         if (jobData.status === "running" || jobData.status === "completed") {
           const newPoint = {
             epoch: jobData.current_epoch,
@@ -236,8 +250,10 @@ export default function TrainModelPage() {
             }
             return [...prev, newPoint].sort((a,b) => a.epoch - b.epoch);
           });
+        // Save ZPE stats for advisor dataset
+        const zpeHistory = parseLogMessagesToZpeHistory(jobData.log_messages || []);
+        saveZpeStatsToDataset(jobId, jobData.log_messages || [], zpeHistory);
         }
-
         if (jobData.status === "completed" || jobData.status === "failed" || jobData.status === "stopped") {
           stopPolling();
           fetchJobsList();
@@ -245,14 +261,13 @@ export default function TrainModelPage() {
             title: `Job ${jobData.status}`, 
             description: `Job ${jobId.replace('zpe_job_','')} (${jobData.parameters.modelName}) finished with status: ${jobData.status}. Accuracy: ${jobData.accuracy.toFixed(2)}%` 
           });
-        }
       }
     } catch (error: any) {
       console.error("Error polling job status:", error);
       toast({ title: "Error polling job status", description: error.message, variant: "destructive" });
       stopPolling();
     }
-  }, [activeJob?.job_id, fetchJobsList, stopPolling]);
+  }, [currentJobId, fetchJobsList, stopPolling]);
 
   const parseLogMessagesToZpeHistory = (logMessages: string[]): Array<{ epoch: number; zpe_effects: number[] }> => {
     if (!logMessages) return [];
@@ -276,18 +291,20 @@ export default function TrainModelPage() {
   const logEndEpochMatch = (log: string) => log.match(/E(\d+) END - TrainL: [\d.]+, ValAcc: ([\d.]+)%, ValL: ([\d.]+)/);
   const logZpeMatch = (log: string) => log.match(/ZPE: \[([,\d\s.]+)\]/);
 
-  const handleViewJobDetails = useCallback(async (jobId: string) => {
+  const handleViewJobDetails = useCallback(async (jobId: string, showLoading = true) => {
+    if (currentJobId !== jobId) {
     stopPolling();
     setChartData([]);
     setActiveJob(null);
-
+      setCurrentJobId(jobId);
+      if (showLoading) setIsMonitorLoading(true);
+    }
     try {
       const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch job status for ${jobId}`);
       }
       const data: TrainingJob = await response.json();
-
       if (data.log_messages) {
         const chartDataFromLog = (data.log_messages || [])
           .map((log): { epoch: number; accuracy?: number; loss?: number; avg_zpe?: number; } | null => {
@@ -310,11 +327,14 @@ export default function TrainModelPage() {
           setChartData(chartDataFromLog.sort((a, b) => a.epoch - b.epoch));
         } else if (data.status === "completed" || data.status === "stopped") {
         }
+        // Save ZPE stats for advisor dataset
+        const zpeHistory = parseLogMessagesToZpeHistory(data.log_messages);
+        saveZpeStatsToDataset(jobId, data.log_messages, zpeHistory);
       }
 
       if (data.status === "running" || data.status === "pending") {
         if (!isPollingRef.current) {
-          pollingRef.current = setInterval(() => pollJobStatus(jobId), 2000);
+          pollingRef.current = setInterval(() => pollJobStatus(jobId, false), 2000);
           isPollingRef.current = true;
           console.log(`Started polling for job ${jobId}`);
         }
@@ -322,14 +342,34 @@ export default function TrainModelPage() {
       } else {
         stopPolling();
       }
+      setActiveJob(data);
+      setIsMonitorLoading(false);
+      setInitialLoadDone(true);
+      if (data.status === "completed") {
+        setContinueFromJobId(jobId);
+      }
+      setJobToPrefill(data);
+      setTrainMode('new');
+      // Prefill form with job parameters, but clear baseConfigId
+      const paramsWithNewName = {
+        ...defaultFormValues,
+        ...data.parameters,
+        modelName: `${data.parameters.modelName}_retrain_${Date.now().toString().slice(-4)}`,
+        baseConfigId: undefined,
+      };
+      reset(paramsWithNewName);
+      toast({ title: "Form Pre-filled", description: `Loaded parameters from job ${data.parameters.modelName}. Model name updated.` });
+      setContinueFromJobId(data.job_id);
     } catch (error: any) {
       toast({ title: "Error fetching job details", description: error.message, variant: "destructive"});
       setActiveJob(null);
       stopPolling();
+      setIsMonitorLoading(false);
+      setInitialLoadDone(true);
     } finally {
       setIsSubmitting(false);
     }
-  }, [pollJobStatus, stopPolling]);
+  }, [pollJobStatus, stopPolling, currentJobId]);
 
   const onSubmit = async (data: TrainingParameters) => {
     setIsSubmitting(true);
@@ -388,7 +428,6 @@ export default function TrainModelPage() {
   useEffect(() => {
     const initializePage = async () => {
       console.log("useEffect: Starting initialization");
-
       try {
         // --- ADVISOR PARAMS FROM URL ---
         const advisedParamsEncoded = searchParams.get("advisedParams");
@@ -452,7 +491,7 @@ export default function TrainModelPage() {
             }
 
             if (jobToPrefill.status === "running" || jobToPrefill.status === "pending") {
-              await handleViewJobDetails(prefillJobId);
+              await handleViewJobDetails(prefillJobId, true);
               console.log(`useEffect: Loaded details for prefill job ${prefillJobId} into monitor (running/pending).`);
             } else {
               setActiveJob(jobToPrefill);
@@ -462,6 +501,8 @@ export default function TrainModelPage() {
                 loss: jobToPrefill.loss,
                 avg_zpe: jobToPrefill.zpe_effects && jobToPrefill.zpe_effects.length > 0 ? jobToPrefill.zpe_effects.reduce((a,b)=>a+b,0) / jobToPrefill.zpe_effects.length : 0
               }]);
+              setIsMonitorLoading(false);
+              setInitialLoadDone(true);
               console.log(`useEffect: Loaded details for prefill job ${prefillJobId} into monitor (completed/failed/stopped).`);
             }
           } catch (e: any) {
@@ -472,19 +513,24 @@ export default function TrainModelPage() {
           console.log("useEffect: No prefill job ID found. Checking for active jobs.");
           const runningOrPendingJob = recentJobs.find((j: TrainingJobSummary) => j.status === 'running' || j.status === 'pending');
           if (runningOrPendingJob) {
+            setIsMonitorLoading(true);
+            setInitialLoadDone(false);
             console.log(`useEffect: Found active job: ${runningOrPendingJob.job_id}. Loading details.`);
             toast({ title: "Active Job Found", description: `Monitoring job ${runningOrPendingJob.job_id.slice(-6)} (${runningOrPendingJob.model_name}).` });
-            await handleViewJobDetails(runningOrPendingJob.job_id);
+            await handleViewJobDetails(runningOrPendingJob.job_id, true);
           } else {
+            setIsMonitorLoading(false);
+            setInitialLoadDone(true);
             console.log("useEffect: No active job found.");
           }
         }
       } catch (error: any) {
         console.error("useEffect: Error during initialization:", error);
         toast({ title: "Initialization Error", description: error.message, variant: "destructive" });
-      } finally {
-        console.log("useEffect: Initialization complete.");
+        setIsMonitorLoading(false);
+        setInitialLoadDone(true);
       }
+      console.log("useEffect: Initialization complete.");
     };
 
     initializePage();
@@ -494,6 +540,20 @@ export default function TrainModelPage() {
       stopPolling();
     };
   }, [searchParams, fetchJobsList, handleViewJobDetails, reset, stopPolling]);
+
+  useEffect(() => {
+    // Auto-load advisorParams from query param if present
+    const advisorParams = searchParams.get("advisorParams");
+    if (advisorParams) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(advisorParams));
+        reset(parsed);
+        toast({ title: "Advisor Parameters Loaded", description: "Parameters from the HS-QNN Advisor have been loaded into the form." });
+      } catch (e) {
+        toast({ title: "Failed to load advisor parameters", description: String(e), variant: "destructive" });
+      }
+    }
+  }, [searchParams, reset, toast]);
 
   const renderParamArrayFields = (paramName: "momentumParams" | "strengthParams" | "noiseParams" | "couplingParams", labelPrefix: string, Icon: React.ElementType) => (
     <div className="space-y-2">
@@ -556,6 +616,65 @@ export default function TrainModelPage() {
     }
   };
 
+  // Tooltip state for job actions
+  const [hoveredAction, setHoveredAction] = useState<{ jobId: string; action: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    // Start polling for the active job if it is running or pending
+    if (activeJob && (activeJob.status === 'running' || activeJob.status === 'pending')) {
+      if (!isPollingRef.current) {
+        pollingRef.current = setInterval(() => {
+          pollJobStatus(activeJob.job_id, false);
+        }, 2000);
+        isPollingRef.current = true;
+        console.log(`Started polling for job ${activeJob.job_id}`);
+      }
+    } else {
+      // Stop polling if job is not running or pending
+      stopPolling();
+    }
+    // Clean up polling on unmount or job change
+    return () => {
+      stopPolling();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJob?.job_id, activeJob?.status]);
+
+  // Add a handler to load PTH file when loading advice from advisor
+  const handleAdvisorApplyParameters = (params: TrainingParameters, previousJobId?: string) => {
+    // Ensure all required fields are present and arrays are correct length
+    const safeParams = {
+      ...defaultFormValues,
+      ...params,
+      momentumParams: (params.momentumParams && params.momentumParams.length === 6) ? params.momentumParams : defaultFormValues.momentumParams,
+      strengthParams: (params.strengthParams && params.strengthParams.length === 6) ? params.strengthParams : defaultFormValues.strengthParams,
+      noiseParams: (params.noiseParams && params.noiseParams.length === 6) ? params.noiseParams : defaultFormValues.noiseParams,
+      couplingParams: (params.couplingParams && params.couplingParams.length === 6) ? params.couplingParams : defaultFormValues.couplingParams,
+    };
+    reset(safeParams);
+    setFormKey(prevKey => prevKey + 1);
+    // If previousJobId is provided, trigger PTH file loading (placeholder)
+    if (previousJobId) {
+      setContinueFromJobId(previousJobId);
+    }
+  };
+
+  const [advisorOpen, setAdvisorOpen] = useState(true);
+
+  // Add two explicit submit handlers for the two buttons
+  const handleStartNewTraining = handleSubmit((data) => {
+    setValue('baseConfigId', undefined);
+    setTrainMode('new');
+    onSubmit({ ...data, baseConfigId: undefined });
+  });
+  const handleContinueTraining = handleSubmit((data) => {
+    if (jobToPrefill) {
+      setValue('baseConfigId', jobToPrefill.job_id);
+      setTrainMode('continue');
+      onSubmit({ ...data, baseConfigId: jobToPrefill.job_id });
+    }
+  });
+
   return (
     <div className="container mx-auto p-4 md:p-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -565,7 +684,7 @@ export default function TrainModelPage() {
             <CardDescription>Configure your ZPE-enhanced neural network training job.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" key={formKey}>
+            <form onSubmit={handleStartNewTraining} className="space-y-6" key={formKey}>
               <Tabs defaultValue="general" className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="general">General</TabsTrigger>
@@ -602,31 +721,24 @@ export default function TrainModelPage() {
                   </div>
                 </TabsContent>
               </Tabs>
-              <HSQNNAdvisor
-                onApplyParameters={(params) => {
-                  // Ensure all required fields are present and arrays are correct length
-                  const safeParams = {
-                    ...defaultFormValues,
-                    ...params,
-                    momentumParams: (params.momentumParams && params.momentumParams.length === 6) ? params.momentumParams : defaultFormValues.momentumParams,
-                    strengthParams: (params.strengthParams && params.strengthParams.length === 6) ? params.strengthParams : defaultFormValues.strengthParams,
-                    noiseParams: (params.noiseParams && params.noiseParams.length === 6) ? params.noiseParams : defaultFormValues.noiseParams,
-                    couplingParams: (params.couplingParams && params.couplingParams.length === 6) ? params.couplingParams : defaultFormValues.couplingParams,
-                  };
-                  reset(safeParams);
-                  setFormKey(prevKey => prevKey + 1);
-                }}
-                onSaveConfig={handleSaveSuggestedParameters}
-                className="mt-6"
-              />
-              <CardFooter className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => reset(defaultFormValues)} disabled={isSubmitting}>
-                  Reset
-                </Button>
-                <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Submitting..." : "Start Training"}
-                </Button>
-              </CardFooter>
+              <div className="flex gap-4 mt-4">
+                <Button
+                  type="button"
+                  variant={trainMode === 'new' ? 'default' : 'outline'}
+                  onClick={handleStartNewTraining}
+                  disabled={isSubmitting}
+                >
+                  Start New Training Session
+                        </Button>
+                <Button
+                  type="button"
+                  variant={trainMode === 'continue' ? 'default' : 'outline'}
+                  onClick={handleContinueTraining}
+                  disabled={isSubmitting || !jobToPrefill}
+                >
+                  Train on Previously Trained Model (.pth)
+                        </Button>
+                      </div>
             </form>
           </CardContent>
         </Card>
@@ -637,7 +749,12 @@ export default function TrainModelPage() {
             <CardDescription>Status for Job ID: {activeJob?.job_id ? activeJob.job_id.replace('zpe_job_', '') : 'None'}</CardDescription>
           </CardHeader>
           <CardContent>
-            {activeJob ? (
+            {isMonitorLoading ? (
+              <div className="flex flex-col items-center justify-center h-64">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+                <p className="text-muted-foreground text-lg">Loading job stats...</p>
+              </div>
+            ) : activeJob ? (
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <Label>Status</Label>
@@ -690,11 +807,13 @@ export default function TrainModelPage() {
                 </ScrollArea>
               </div>
             ) : (
+              initialLoadDone && (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>No Active Job</AlertTitle>
                 <AlertDescription>Select a job from the history or start a new training job.</AlertDescription>
               </Alert>
+              )
             )}
           </CardContent>
         </Card>
@@ -744,16 +863,90 @@ export default function TrainModelPage() {
                     </TableCell>
                     <TableCell>{job.current_epoch}/{job.total_epochs || 0}</TableCell>
                     <TableCell>{job.accuracy.toFixed(2)}%</TableCell>
-                    <TableCell>
+                    <TableCell className="relative">
+                      <span
+                        onMouseEnter={e => setHoveredAction({ jobId: job.job_id, action: "trainer", x: e.clientX, y: e.clientY })}
+                        onMouseLeave={() => setHoveredAction(null)}
+                      >
                       <Button
                         variant="ghost"
-                        size="sm"
-                        onClick={() => handleViewJobDetails(job.job_id)}
+                          size="icon"
+                          style={{ width: 40, height: 40 }}
+                          onClick={() => handleViewJobDetails(job.job_id, true)}
                         disabled={isSubmitting}
+                          className="mx-1"
                       >
-                        <ExternalLink className="h-4 w-4" />
-                        <span className="sr-only">View Details</span>
+                          <ArrowDownCircle className="h-6 w-6" />
                       </Button>
+                      </span>
+                      <span
+                        onMouseEnter={e => setHoveredAction({ jobId: job.job_id, action: "advisor", x: e.clientX, y: e.clientY })}
+                        onMouseLeave={() => setHoveredAction(null)}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          style={{ width: 40, height: 40 }}
+                          onClick={async () => {
+                            const response = await fetch(`${API_BASE_URL}/status/${job.job_id}`);
+                            if (response.ok) {
+                              const data: TrainingJob = await response.json();
+                              window.dispatchEvent(new CustomEvent("advisorPrefill", { detail: data.parameters }));
+                              toast({ title: "Loaded in HS-QNN Advisor", description: `Parameters from job ${job.model_name} sent to advisor.` });
+                            } else {
+                              toast({ title: "Error", description: "Could not load job details for advisor.", variant: "destructive" });
+                            }
+                          }}
+                          disabled={isSubmitting}
+                          className="mx-1"
+                        >
+                          <Wand2 className="h-6 w-6" />
+                        </Button>
+                      </span>
+                      <span
+                        onMouseEnter={e => setHoveredAction({ jobId: job.job_id, action: "continue", x: e.clientX, y: e.clientY })}
+                        onMouseLeave={() => setHoveredAction(null)}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          style={{ width: 40, height: 40 }}
+                          onClick={async () => {
+                            const response = await fetch(`${API_BASE_URL}/status/${job.job_id}`);
+                            if (response.ok) {
+                              const data: TrainingJob = await response.json();
+                              await onSubmit({ ...data.parameters, modelName: `${data.parameters.modelName}_cont_${Date.now().toString().slice(-4)}` });
+                            } else {
+                              toast({ title: "Error", description: "Could not load job details to continue training.", variant: "destructive" });
+                            }
+                          }}
+                          disabled={isSubmitting}
+                          className="mx-1"
+                        >
+                          <PlayCircle className="h-6 w-6" />
+                        </Button>
+                      </span>
+                      {hoveredAction && hoveredAction.jobId === job.job_id && (
+                        <div
+                          style={{
+                            position: 'fixed',
+                            left: hoveredAction.x + 12,
+                            top: hoveredAction.y + 12,
+                            zIndex: 1000,
+                            background: 'rgba(30,30,40,0.97)',
+                            color: '#fff',
+                            padding: '7px 14px',
+                            borderRadius: 8,
+                            fontSize: 15,
+                            pointerEvents: 'none',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.18)'
+                          }}
+                        >
+                          {hoveredAction.action === "trainer" && "Load in Trainer"}
+                          {hoveredAction.action === "advisor" && "Load in HS-QNN Advisor"}
+                          {hoveredAction.action === "continue" && "Continue Training Now!"}
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

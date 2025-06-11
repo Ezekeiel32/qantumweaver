@@ -35,8 +35,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { adviseHSQNNParameters, type HSQNNAdvisorInput, type HSQNNAdvisorOutput } from "@/ai/flows/hs-qnn-parameter-advisor";
 import { z } from "zod";
-import { HSQNNAdvisor } from "@/components/hs-qnn-advisor";
-import { defaultZPEParams } from "@/lib/constants";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
@@ -789,12 +787,6 @@ export default function MyZpeAiModelsPage() {
           </DialogContent>
         </Dialog>
       )}
-
-      <HSQNNAdvisor
-        onApplyParameters={handleLoadInTrainer}
-        onSaveConfig={handleSaveSuggestedParametersFromAdvisor}
-        className="mt-6"
-      />
 
       <Card className="mt-6 bg-accent/10 border-accent/30">
         <CardHeader>

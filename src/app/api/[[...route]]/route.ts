@@ -11,20 +11,16 @@ import "@/ai/flows/extract-high-gain-components";
 import "@/ai/flows/get-initial-zpe-analysis-flow";
 import "@/ai/flows/hs-qnn-parameter-advisor";
 import "@/ai/flows/implement-zpe";
-import "../../../src/ai/flows/invoke-generic-llm-flow";
+import "@/ai/flows/invoke-generic-llm-flow";
 import "@/ai/flows/quantize-colab-model";
-import "@/ai/flows/show-scaled-output";
 
 
 genkit({
   plugins: [
     googleAI(),
   ],
-  logLevel: "debug",
-  enableTracingAndMetrics: true,
 });
 
 export async function POST(req: NextRequest) {
-  const G = await import('genkit/next');
-  return G.POST(req)
+  return genkit(req as any);
 }

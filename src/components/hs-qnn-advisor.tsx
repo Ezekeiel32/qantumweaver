@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
 interface HSQNNAdvisorProps {
-  onApplyParameters: (params: TrainingParameters) => void;
+  onApplyParameters: (params: TrainingParameters, previousJobId?: string) => void;
   onSaveConfig: (params: TrainingParameters) => void;
   className?: string;
 }
@@ -152,6 +152,16 @@ export function HSQNNAdvisor({ onApplyParameters, onSaveConfig, className }: HSQ
       });
   };
 
+  // Utility to load the ZPE stats dataset from localStorage
+  function loadZpeStatsDataset() {
+    try {
+      const key = 'zpeStatsDataset';
+      return JSON.parse(localStorage.getItem(key) || '[]');
+    } catch {
+      return [];
+    }
+  }
+
   const handleGetAdvice = async () => {
     if (!selectedJobDetails) {
       setError("No previous job selected for advice.");
@@ -168,7 +178,9 @@ export function HSQNNAdvisor({ onApplyParameters, onSaveConfig, className }: HSQ
 
     // Parse ZPE history with loss and accuracy
     const zpeHistory = parseLogMessagesToZpeHistory(selectedJobDetails.log_messages || []);
-    
+    // Load the full ZPE stats dataset
+    const zpeStatsDataset = loadZpeStatsDataset();
+
     // Format the ZPE history string with all metrics
     const zpeHistoryString = zpeHistory
       .map(entry => {
@@ -188,12 +200,13 @@ export function HSQNNAdvisor({ onApplyParameters, onSaveConfig, className }: HSQ
       })
       .join('\n') + `\nFinal Accuracy: ${selectedJobDetails.accuracy.toFixed(4)}%`;
 
-    const inputForAI: HSQNNAdvisorInput = {
+    const inputForAI: any = {
       previousJobId: selectedJobDetails.job_id,
       hnnObjective: advisorObjective,
       previousJobZpeHistory: zpeHistory,
       previousJobZpeHistoryString: zpeHistoryString,
       previousTrainingParameters: selectedJobDetails.parameters,
+      zpeStatsDataset, // <-- pass the full dataset for advisor use
     };
 
     try {
@@ -236,7 +249,8 @@ export function HSQNNAdvisor({ onApplyParameters, onSaveConfig, className }: HSQ
       baseConfigId: selectedJobDetails?.job_id,
     };
 
-    onApplyParameters(mergedParams);
+    // Pass previous job ID to parent for PTH file loading
+    onApplyParameters(mergedParams, selectedJobDetails?.job_id);
   };
 
   const handleSaveConfig = () => {
@@ -326,8 +340,8 @@ export function HSQNNAdvisor({ onApplyParameters, onSaveConfig, className }: HSQ
               {JSON.stringify(advisorResult.suggestedNextTrainingParameters, null, 2)}
             </pre>
             <div className="flex gap-2">
-              <Button onClick={handleApplyAdvice} disabled={isLoading}>
-                <Wand2 className="mr-2 h-4 w-4" /> Apply to Form
+              <Button onClick={() => { handleApplyAdvice(); /* TODO: trigger PTH file load for previous job */ }} disabled={isLoading}>
+                <Wand2 className="mr-2 h-4 w-4" /> Load in Trainer
               </Button>
               <Button variant="outline" onClick={handleSaveConfig} disabled={isLoading}>
                 <Save className="mr-2 h-4 w-4" /> Save Config

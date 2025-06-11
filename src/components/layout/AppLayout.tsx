@@ -1,4 +1,3 @@
-
 "use client";
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -27,6 +26,8 @@ import {
   SidebarGroupLabel,
   useSidebar, 
 } from "@/components/ui/sidebar";
+import FloatingMiniAdvisor from "@/components/FloatingMiniAdvisor";
+import { AdvisorProvider } from "@/components/mini-hs-qnn-advisor";
 
 const mainNavItems = [
   { href: "/introduction", label: "Introduction", icon: ArrowRight },
@@ -217,52 +218,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-background">
-        <Sidebar
-          side="left"
-          collapsible="offcanvas" 
-          variant="sidebar" 
-          className="bg-sidebar text-sidebar-foreground" 
-        >
-          <AppSidebarContent />
-        </Sidebar>
-
-        <div className="flex flex-col flex-1 w-full"> 
-          <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-card px-4 md:px-6">
-             <SidebarTrigger
-                variant="outline" 
-                size="icon"
-                className="shrink-0 md:hidden"
-             />
-             <SidebarTrigger
-                variant="ghost" 
-                size="icon"
-                className="hidden shrink-0 md:inline-flex" 
-             />
-
-            <div className="flex-1 md:hidden"> 
-              <Link href="/dashboard" className="flex items-center gap-2 text-lg font-semibold text-primary">
-                <Zap className="h-6 w-6" />
-                <span className="sr-only">Quantum Weaver</span>
-              </Link>
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-               <Button variant="ghost" size="icon" onClick={toggleDarkModeGlobal} className="hidden md:inline-flex">
-                  {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-                  <span className="sr-only">Toggle theme</span>
-              </Button>
-               <Button variant="ghost" size="icon" onClick={toggleDarkModeGlobal} className="md:hidden">
-                  {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-                  <span className="sr-only">Toggle theme</span>
-              </Button>
-            </div>
-          </header>
-          <SidebarInset> 
+      <AdvisorProvider>
+        <div className="flex h-screen w-screen overflow-hidden">
+          <Sidebar className="h-full">
+            <AppSidebarContent />
+          </Sidebar>
+          <main className="flex-1 overflow-y-auto bg-background dark:bg-zinc-950">
             {children}
-          </SidebarInset>
+          </main>
         </div>
-      </div>
-      <Toaster />
+        {/* Floating Mini Advisor always present */}
+        <FloatingMiniAdvisor
+          onApplyParameters={() => {}}
+          onSaveConfig={() => {}}
+          defaultMinimized={true}
+        />
+      </AdvisorProvider>
     </SidebarProvider>
   );
 }

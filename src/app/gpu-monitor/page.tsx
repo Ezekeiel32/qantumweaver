@@ -30,6 +30,8 @@ interface SystemStats {
   cpu_info: CpuInfo | { error?: string } | null;
 }
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
+
 export default function GPUMonitorPage() {
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,7 +40,7 @@ export default function GPUMonitorPage() {
   useEffect(() => {
     const fetchSystemStats = async () => {
       try {
-        const response = await fetch('/api/system-stats');
+        const response = await fetch(`${API_BASE_URL}/system-stats`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }

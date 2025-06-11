@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Lightbulb, Replace, Cog, Scaling, Box, Share2, Wrench, Rocket, ArrowRight, Wand2 } from 'lucide-react';
+import { MiniHSQNNAdvisor } from "@/components/mini-hs-qnn-advisor";
 
 const aiFlows = [
   { href: "/ai/configure-model", title: "AI Model Configurator", description: "Get AI advice for model parameters based on dataset description and PyTorch code.", icon: Wrench },
@@ -34,13 +35,7 @@ export default function AiFlowsHubPage() {
       </Card>
 
       <div className="grid grid-cols-1 gap-6">
-        <Card className="bg-card/90 backdrop-blur-sm">
-            <CardHeader>
-              <CardTitle>ZPE-AI Parameter Advisor</CardTitle>
-            </CardHeader>
-            <CardContent>
-            </CardContent>
-          </Card>
+        <MiniHSQNNAdvisor fullMode onApplyParameters={() => {}} onSaveConfig={() => {}} className="my-8" />
       </div>
     </div>
   );

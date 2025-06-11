@@ -1,4 +1,3 @@
-
 "use client";
 import React, { useState, useEffect, useCallback } from "react";
 import type { ModelConfig } from "@/types/entities"; // Keep for potential future use or type consistency
