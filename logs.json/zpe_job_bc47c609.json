@@ -1,0 +1,82 @@
+{
+  "job_id": "zpe_job_bc47c609",
+  "status": "stopped",
+  "current_epoch": 1,
+  "total_epochs": 30,
+  "accuracy": 98.57,
+  "loss": 0.574719628967797,
+  "zpe_effects": [
+    0.1998872011899948,
+    0.14688201248645782,
+    0.09893889725208282,
+    0.145705446600914,
+    0.03563575819134712,
+    0.19999998807907104
+  ],
+  "log_messages": [
+    "Init job: ZPE-Colab-Sim",
+    "Starting PyTorch training: ZPE-Colab-Sim",
+    "Device: cuda",
+    "Setting up MNIST dataset...",
+    "DataLoaders created. Train: 1875, Val: 313 batches.",
+    "Model & Optimizer initialized.",
+    "--- Epoch 1/30 ---",
+    "E1 B375/1875 L: 0.8688",
+    "E1 B750/1875 L: 0.9433",
+    "E1 B1125/1875 L: 1.3585",
+    "E1 B1500/1875 L: 1.1183",
+    "E1 END - TrainL: 1.2092, ValAcc: 98.57%, ValL: 0.5747",
+    "ZPE: [0.1999, 0.1469, 0.0989, 0.1457, 0.0356, 0.2]",
+    "--- Epoch 2/30 ---",
+    "Stop request received."
+  ],
+  "parameters": {
+    "totalEpochs": 30,
+    "batchSize": 32,
+    "learningRate": 0.001,
+    "weightDecay": 0.0001,
+    "momentumParams": [
+      0.9,
+      0.85,
+      0.8,
+      0.75,
+      0.7,
+      0.65
+    ],
+    "strengthParams": [
+      0.35,
+      0.33,
+      0.31,
+      0.6,
+      0.27,
+      0.5
+    ],
+    "noiseParams": [
+      0.3,
+      0.28,
+      0.26,
+      0.35,
+      0.22,
+      0.25
+    ],
+    "quantumCircuitSize": 32,
+    "labelSmoothing": 0.1,
+    "quantumMode": true,
+    "modelName": "ZPE-Colab-Sim",
+    "baseConfigId": null
+  },
+  "start_time": "2025-05-31T22:35:42.311301",
+  "end_time": null,
+  "gpu_info": {
+    "id": "0",
+    "name": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+    "utilization_gpu_percent": 99.0,
+    "utilization_memory_io_percent": 95.0,
+    "memory_total_mb": 6144.0,
+    "memory_used_mb": 624.875,
+    "memory_free_mb": 5519.125,
+    "memory_used_percent": 10.170491536458334,
+    "temperature_c": 59.0,
+    "power_draw_w": 19.897
+  }
+}

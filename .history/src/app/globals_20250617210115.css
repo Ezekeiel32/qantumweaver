@@ -1,0 +1,425 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 8% 18%; /* Dark Gray #292933 */
+    --foreground: 0 0% 88%; /* Light Gray #E0E0E0 */
+
+    --card: 240 8% 22%; /* Slightly Lighter Dark Gray #33333F */
+    --card-foreground: 0 0% 88%; /* Light Gray */
+
+    --popover: 240 8% 22%;
+    --popover-foreground: 0 0% 88%;
+
+    --primary: 227 55% 39%; /* Deep Blue #2E479A */
+    --primary-foreground: 0 0% 100%; /* White */
+
+    --secondary: 210 60% 26%; /* Darker blue for secondary elements */
+    --secondary-foreground: 0 0% 88%;
+
+    --muted: 240 6% 28%; /* Muted dark shade */
+    --muted-foreground: 0 0% 65%; /* Muted light gray */
+
+    --accent: 203 80% 79%; /* Light Blue #A0D4F5 */
+    --accent-foreground: 210 60% 16%; /* Dark Blue for text on accent */
+
+    --destructive: 0 72% 51%; /* Destructive red */
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 8% 32%; /* #4A4A58 */
+    --input: 240 8% 32%;
+    --ring: 203 80% 79%; /* Light Blue for focus rings */
+
+    --chart-1: 227 55% 50%; /* Primary variant */
+    --chart-2: 203 80% 65%; /* Accent variant */
+    --chart-3: 30 80% 65%; /* Orange/Yellow */
+    --chart-4: 120 60% 55%; /* Green */
+    --chart-5: 280 65% 65%; /* Purple */
+
+    --radius: 0.5rem;
+
+    /* Sidebar specific colors to maintain its distinct look if needed, or can align with card */
+    --sidebar-background: 240 8% 15%; /* Slightly darker than main background */
+    --sidebar-foreground: 0 0% 80%;
+    --sidebar-primary: 203 80% 79%; /* Accent for active items */
+    --sidebar-primary-foreground: 210 60% 16%;
+    --sidebar-accent: 240 8% 25%; /* Hover items */
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 240 8% 20%;
+    --sidebar-ring: 203 80% 79%;
+
+    --bg-main: #0a0f1c;
+    --bg-panel: #18181b;
+    --bg-glass: rgba(20, 20, 40, 0.7);
+    --neon-cyan: #00ffe7;
+    --neon-blue: #00aaff;
+    --neon-yellow: #ffe066;
+    --neon-orange: #ff9900;
+    --soft-blue: #3a86ff;
+    --soft-purple: #a259ff;
+    --text-main: #f8f8ff;
+    --text-muted: #b0b0c3;
+    --border-radius: 14px;
+    --font-mono: 'JetBrains Mono', 'Fira Mono', 'IBM Plex Mono', 'Share Tech Mono', 'VT323', monospace;
+    --shadow-neon: 0 0 16px var(--neon-cyan), 0 0 32px var(--neon-cyan);
+    --shadow-blue: 0 0 16px var(--neon-blue), 0 0 32px var(--neon-blue);
+    --shadow-yellow: 0 0 16px var(--neon-yellow), 0 0 32px var(--neon-yellow);
+  }
+
+  .dark {
+    /* Keep dark theme variables same as root for now as we are dark by default */
+    --background: 240 8% 18%;
+    --foreground: 0 0% 88%;
+    --card: 240 8% 22%;
+    --card-foreground: 0 0% 88%;
+    --popover: 240 8% 22%;
+    --popover-foreground: 0 0% 88%;
+    --primary: 227 55% 39%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 60% 26%;
+    --secondary-foreground: 0 0% 88%;
+    --muted: 240 6% 28%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 203 80% 79%;
+    --accent-foreground: 210 60% 16%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 8% 32%;
+    --input: 240 8% 32%;
+    --ring: 203 80% 79%;
+
+    --chart-1: 227 55% 50%;
+    --chart-2: 203 80% 65%;
+    --chart-3: 30 80% 65%;
+    --chart-4: 120 60% 55%;
+    --chart-5: 280 65% 65%;
+
+    --sidebar-background: 240 8% 15%;
+    --sidebar-foreground: 0 0% 80%;
+    --sidebar-primary: 203 80% 79%;
+    --sidebar-primary-foreground: 210 60% 16%;
+    --sidebar-accent: 240 8% 25%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 240 8% 20%;
+    --sidebar-ring: 203 80% 79%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-body;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: linear-gradient(135deg, var(--bg-main) 0%, #1a0033 100%);
+    color: var(--text-main);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+  }
+  h1,h2,h3,h4,h5,h6 {
+    @apply font-headline;
+  }
+}
+
+/* Holographic effect attempt for charts - very basic */
+.recharts-surface, .recharts-layer {
+  /* filter: drop-shadow(0 0 5px hsl(var(--accent) / 0.7)) brightness(1.1); */
+  transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+}
+
+.recharts-tooltip-cursor {
+  fill: hsl(var(--accent) / 0.2);
+}
+.recharts-active-dot > circle {
+  stroke: hsl(var(--accent));
+  fill: hsl(var(--accent));
+  r: 5;
+}
+.recharts-legend-item-text {
+   color: hsl(var(--foreground)) !important;
+}
+
+.recharts-cartesian-axis-tick-value {
+  fill: hsl(var(--muted-foreground));
+}
+.recharts-text {
+    fill: hsl(var(--foreground)); /* Ensures chart labels are visible */
+}
+
+/* Styles for p5.js canvas within the layout */
+.p5Canvas {
+  display: block; /* Removes any extra space below the canvas */
+  border-radius: var(--radius); /* Consistent with card radius */
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); /* Subtle shadow */
+  border: 1px solid hsl(var(--border));
+}
+
+html.dark .p5Canvas {
+  /* Add specific dark mode styles if needed, though border might be enough */
+}
+
+.font-body {
+  font-family: var(--font-inter), sans-serif;
+}
+.font-headline {
+  font-family: var(--font-inter), sans-serif;
+}
+.font-code {
+  font-family: var(--font-source-code-pro), monospace;
+}
+
+/* Custom dark sleek scrollbars for all scrollable areas */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: var(--bg-panel);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--neon-cyan);
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary));
+}
+::-webkit-scrollbar-corner {
+  background: hsl(var(--muted));
+}
+
+/* For Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) hsl(var(--muted));
+}
+
+.retro-scanlines::before {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  left: 0; right: 0; top: 0; bottom: 0;
+  background: repeating-linear-gradient(0deg, rgba(0,255,255,0.04) 0px, rgba(0,255,255,0.04) 1px, transparent 2px, transparent 6px);
+  z-index: 9999;
+}
+
+.neon-border {
+  border: 2px solid var(--neon-cyan);
+  box-shadow: var(--shadow-neon);
+  border-radius: var(--border-radius);
+}
+
+.glass {
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px) saturate(1.2);
+  border-radius: var(--border-radius);
+}
+
+.neon-btn {
+  background: transparent;
+  color: var(--neon-cyan);
+  border: 2px solid var(--neon-cyan);
+  box-shadow: 0 0 8px var(--neon-cyan);
+  border-radius: var(--border-radius);
+  font-family: var(--font-mono);
+  transition: box-shadow 0.2s, color 0.2s;
+}
+.neon-btn:hover {
+  box-shadow: 0 0 24px var(--neon-cyan), 0 0 48px var(--neon-cyan);
+  color: #fff;
+}
+
+.neon-heading {
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px var(--neon-cyan), 0 0 16px var(--neon-blue);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-blue), var(--neon-yellow));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 3s linear infinite;
+}
+@keyframes shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+.neon-card {
+  background: var(--bg-panel);
+  border: 2px solid var(--neon-blue);
+  box-shadow: 0 0 24px var(--neon-blue), 0 0 48px var(--neon-blue);
+  border-radius: var(--border-radius);
+  padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.neon-card::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  background: linear-gradient(120deg, rgba(0,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%);
+  opacity: 0.7;
+}
+
+input, select, textarea {
+  background: transparent;
+  color: var(--text-main);
+  border: 2px solid var(--neon-cyan);
+  border-radius: var(--border-radius);
+  font-family: var(--font-mono);
+  box-shadow: 0 0 8px var(--neon-blue);
+  transition: border 0.2s, box-shadow 0.2s;
+}
+input:focus, select:focus, textarea:focus {
+  border: 2px solid var(--neon-yellow);
+  box-shadow: 0 0 16px var(--neon-yellow);
+  outline: none;
+}
+
+.sidebar {
+  background: linear-gradient(180deg, #10131a 0%, #1a0033 100%);
+  border-right: 2px solid var(--neon-blue);
+  box-shadow: 0 0 24px var(--neon-blue);
+}
+.sidebar .active, .sidebar .selected {
+  color: var(--neon-yellow);
+  text-shadow: 0 0 8px var(--neon-yellow);
+  font-weight: bold;
+  background: rgba(255,255,0,0.08);
+  border-left: 4px solid var(--neon-yellow);
+}
+.sidebar .sidebar-link, .sidebar .sidebar-icon {
+  color: var(--neon-cyan);
+  transition: color 0.2s, text-shadow 0.2s;
+}
+.sidebar .sidebar-link:hover, .sidebar .sidebar-icon:hover {
+  color: #fff;
+  text-shadow: 0 0 12px var(--neon-blue);
+}
+
+.table, .chart, .card, .panel {
+  background: var(--bg-panel);
+  border-radius: var(--border-radius);
+  box-shadow: 0 0 16px var(--neon-blue);
+  color: var(--text-main);
+}
+
+a, .link {
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px var(--neon-blue);
+  transition: color 0.2s;
+}
+a:hover, .link:hover {
+  color: var(--neon-yellow);
+  text-shadow: 0 0 16px var(--neon-yellow);
+}
+
+/* Animated Holographic SVG background utility (to be used in layout) */
+.animated-holo-bg {
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.18;
+  background: repeating-linear-gradient(0deg, rgba(0,255,255,0.04) 0px, rgba(0,255,255,0.04) 1px, transparent 2px, transparent 8px),
+              repeating-linear-gradient(90deg, rgba(0,255,255,0.04) 0px, rgba(0,255,255,0.04) 1px, transparent 2px, transparent 8px);
+  animation: holo-parallax 16s linear infinite;
+}
+@keyframes holo-parallax {
+  0% { background-position: 0 0, 0 0; }
+  100% { background-position: 80px 40px, 40px 80px; }
+}
+
+/* Double neon border utility */
+.neon-double-border {
+  position: relative;
+  border: 2px solid var(--neon-cyan);
+  border-radius: var(--border-radius);
+  box-shadow: 0 0 24px var(--neon-blue), 0 0 48px var(--neon-cyan);
+}
+.neon-double-border::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset: 4px;
+  border: 2px solid var(--neon-blue);
+  border-radius: calc(var(--border-radius) - 4px);
+  box-shadow: 0 0 16px var(--neon-cyan);
+  opacity: 0.7;
+}
+
+/* Animated glass reflection */
+.glass-reflect {
+  position: relative;
+  overflow: hidden;
+}
+.glass-reflect::before {
+  content: '';
+  position: absolute;
+  top: -40%; left: -40%;
+  width: 180%; height: 80%;
+  background: linear-gradient(120deg, rgba(255,255,255,0.12) 0%, rgba(0,255,255,0.04) 100%);
+  transform: rotate(-8deg);
+  filter: blur(8px);
+  animation: glass-sweep 6s linear infinite;
+  pointer-events: none;
+}
+@keyframes glass-sweep {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
+/* Sidebar active indicator */
+.sidebar .active, .sidebar .selected {
+  color: var(--neon-yellow);
+  text-shadow: 0 0 8px var(--neon-yellow);
+  font-weight: bold;
+  background: rgba(255,255,0,0.08);
+  border-left: 4px solid var(--neon-yellow);
+  position: relative;
+}
+.sidebar .active::before, .sidebar .selected::before {
+  content: '';
+  position: absolute;
+  left: -8px; top: 50%;
+  width: 8px; height: 32px;
+  background: linear-gradient(180deg, var(--neon-yellow), var(--neon-cyan));
+  border-radius: 8px;
+  transform: translateY(-50%);
+  box-shadow: 0 0 16px var(--neon-yellow), 0 0 32px var(--neon-cyan);
+  opacity: 0.7;
+  animation: sidebar-pulse 2s infinite alternate;
+}
+@keyframes sidebar-pulse {
+  0% { opacity: 0.7; }
+  100% { opacity: 1; box-shadow: 0 0 32px var(--neon-yellow), 0 0 64px var(--neon-cyan); }
+}
+
+/* Neon SVG icon utility */
+.neon-svg {
+  filter: drop-shadow(0 0 8px var(--neon-cyan)) drop-shadow(0 0 16px var(--neon-blue));
+  transition: filter 0.2s;
+}
+.neon-svg:hover {
+  filter: drop-shadow(0 0 16px var(--neon-yellow)) drop-shadow(0 0 32px var(--neon-cyan));
+}
+
+/* Panel hover/focus effect */
+.neon-card:hover, .neon-card:focus-within {
+  box-shadow: 0 0 48px var(--neon-cyan), 0 0 96px var(--neon-blue);
+  border-color: var(--neon-yellow);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+/* Robustness: ensure all interactive elements are accessible and have focus/active states */
+:focus {
+  outline: 2px solid var(--neon-yellow);
+  outline-offset: 2px;
+}

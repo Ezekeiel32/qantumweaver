@@ -40,7 +40,7 @@ export default function DynamicFormationPage() {
           <p className="text-sm text-muted-foreground mb-1">
             Observe particles influenced by dynamic attractors and ZPE-like jitter.
             Lines between nearby particles conceptually represent field interactions or entanglement.
-          </CardDescription>
+          </p>
           <p className="text-sm text-muted-foreground">
             Use your mouse to orbit and explore the 3D scene.
           </p>

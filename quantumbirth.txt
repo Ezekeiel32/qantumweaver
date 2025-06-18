@@ -1,0 +1,527 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, Subset
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import numpy as np
+
+# ZPEDeepNet Definition
+class ZPEDeepNet(nn.Module):
+    def __init__(self, output_size=10, sequence_length=10):
+        super(ZPEDeepNet, self).__init__()
+        self.sequence_length = sequence_length
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.zpe_flows = [torch.ones(sequence_length, device=self.device) for _ in range(6)]
+
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(512, 2048),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(2048, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, output_size)
+        )
+        self.shortcut1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool2d(2)
+        )
+        self.shortcut2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool2d(2)
+        )
+        self.shortcut3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool2d(2)
+        )
+        self.shortcut4 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool2d(2)
+        )
+
+    def perturb_zpe_flow(self, data, zpe_idx, feature_size):
+        batch_mean = torch.mean(data.detach(), dim=0).view(-1)
+        divisible_size = (batch_mean.size(0) // self.sequence_length) * self.sequence_length
+        batch_mean_truncated = batch_mean[:divisible_size]
+        reshaped = batch_mean_truncated.view(-1, self.sequence_length)
+        perturbation = torch.mean(reshaped, dim=0)
+        perturbation = torch.tanh(perturbation * 0.3)
+        momentum = 0.9 if zpe_idx < 4 else 0.7
+        with torch.no_grad():
+            self.zpe_flows[zpe_idx] = momentum * self.zpe_flows[zpe_idx] + (1 - momentum) * (1.0 + perturbation)
+            self.zpe_flows[zpe_idx] = torch.clamp(self.zpe_flows[zpe_idx], 0.8, 1.2)
+
+    def apply_zpe(self, x, zpe_idx, spatial=True):
+        self.perturb_zpe_flow(x, zpe_idx, x.size(1) if spatial else x.size(-1))
+        flow = self.zpe_flows[zpe_idx]
+        if spatial:
+            size = x.size(2) * x.size(3)
+            flow_expanded = flow.repeat(size // self.sequence_length + 1)[:size].view(1, 1, x.size(2), x.size(3))
+            flow_expanded = flow_expanded.expand(x.size(0), x.size(1), x.size(2), x.size(3))
+        else:
+            flow_expanded = flow.repeat(x.size(-1) // self.sequence_length + 1)[:x.size(-1)].view(1, -1)
+            flow_expanded = flow_expanded.expand(x.size(0), x.size(-1))
+        return x * flow_expanded
+
+    def forward(self, x):
+        x = self.apply_zpe(x, 0)
+        residual = self.shortcut1(x)
+        x = self.conv1(x) + residual
+        x = self.apply_zpe(x, 1)
+        residual = self.shortcut2(x)
+        x = self.conv2(x) + residual
+        x = self.apply_zpe(x, 2)
+        residual = self.shortcut3(x)
+        x = self.conv3(x) + residual
+        x = self.apply_zpe(x, 3)
+        residual = self.shortcut4(x)
+        x = self.conv4(x) + residual
+        x = self.apply_zpe(x, 4)
+        x = self.fc(x)
+        x = self.apply_zpe(x, 5, spatial=False)
+        return x
+
+    def analyze_zpe_effect(self):
+        return [torch.mean(torch.abs(flow - 1.0)).item() for flow in self.zpe_flows]
+
+# Data Setup
+train_transform = transforms.Compose([
+    transforms.RandomRotation(20),
+    transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
+    transforms.RandomCrop(28, padding=4),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,)),
+    transforms.RandomErasing(p=0.5, scale=(0.02, 0.2))
+])
+test_transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
+
+train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=train_transform)
+test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)
+
+train_size = int(0.9 * len(train_dataset))
+val_size = len(train_dataset) - train_size
+train_subset, val_subset = torch.utils.data.random_split(train_dataset, [train_size, val_size])
+train_loader = DataLoader(train_subset, batch_size=32, shuffle=True, num_workers=2)
+val_loader = DataLoader(val_subset, batch_size=32, shuffle=False, num_workers=2)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=2)
+
+# MixUp Function
+def mixup(data, targets, alpha=1.0):
+    indices = torch.randperm(data.size(0))
+    shuffled_data = data[indices]
+    shuffled_targets = targets[indices]
+    lam = np.random.beta(alpha, alpha)
+    data = lam * data + (1 - lam) * shuffled_data
+    return data, targets, shuffled_targets, lam
+
+# Training Setup
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = ZPEDeepNet(output_size=10).to(device)
+criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+scheduler = CosineAnnealingLR(optimizer, T_max=30)
+
+# Training Loop
+num_epochs = 30
+for epoch in range(num_epochs):
+    model.train()
+    total_loss = 0
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        data, target_a, target_b, lam = mixup(data, target)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = lam * criterion(output, target_a) + (1 - lam) * criterion(output, target_b)
+        zpe_effects = model.analyze_zpe_effect()
+        total_loss = loss + 0.001 * sum(zpe_effects)
+        total_loss.backward()
+        optimizer.step()
+        if batch_idx % 200 == 0:
+            print(f'Epoch {epoch+1}/{num_epochs}, Batch {batch_idx}, Loss: {loss.item():.4f}, '
+                  f'ZPE Effects: {zpe_effects}')
+    scheduler.step()
+
+    # Validation
+    model.eval()
+    val_correct = 0
+    val_total = 0
+    with torch.no_grad():
+        for data, target in val_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            _, predicted = torch.max(output.data, 1)
+            val_total += target.size(0)
+            val_correct += (predicted == target).sum().item()
+    val_acc = 100 * val_correct / val_total
+    print(f'Epoch {epoch+1}/{num_epochs}, Validation Accuracy: {val_acc:.2f}%')
+
+# TTA Function
+def tta_predict(model, data, num_augmentations=10):
+    model.eval()
+    outputs = []
+    with torch.no_grad():
+        outputs.append(model(data))
+        aug_transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+        data_denorm = (data * 0.5) + 0.5
+        for _ in range(num_augmentations - 1):
+            aug_data = torch.stack([aug_transform(data_denorm[i].cpu()) for i in range(data.size(0))]).to(device)
+            output = model(aug_data)
+            outputs.append(output)
+    return torch.mean(torch.stack(outputs), dim=0)
+
+# Test with TTA
+model.eval()
+correct = 0
+total = 0
+with torch.no_grad():
+    for data, target in test_loader:
+        data, target = data.to(device), target.to(device)
+        output = tta_predict(model, data)
+        _, predicted = torch.max(output.data, 1)
+        total += target.size(0)
+        correct += (predicted == target).sum().item()
+
+accuracy = 100 * correct / total
+print(f'Accuracy on test set with TTA: {accuracy:.2f}%')
+
+# Save Model
+torch.save(model.state_dict(), '/content/zpe_deepnet_colab.pth')                                                                            
+import torchimport torch.nn as nnimport torch.optim as optimfrom torchvision import datasets, transformsfrom torch.utils.data import DataLoader, Subsetfrom torch.optim.lr_scheduler import CosineAnnealingLRimport numpy as np# ZPEDeepNet Definitionclass ZPEDeepNet(nn.Module):    def __init__(self, output_size=10, sequence_length=10):        super(ZPEDeepNet, self).__init__()        self.sequence_length = sequence_length        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")        self.zpe_flows = [torch.ones(sequence_length, device=self.device) for _ in range(6)]        self.conv1 = nn.Sequential(            nn.Conv2d(1, 64, kernel_size=3, padding=1),            nn.BatchNorm2d(64),            nn.ReLU(),            nn.MaxPool2d(2)        )        self.conv2 = nn.Sequential(            nn.Conv2d(64, 128, kernel_size=3, padding=1),            nn.BatchNorm2d(128),            nn.ReLU(),            nn.MaxPool2d(2)        )        self.conv3 = nn.Sequential(            nn.Conv2d(128, 256, kernel_size=3, padding=1),            nn.BatchNorm2d(256),            nn.ReLU(),            nn.MaxPool2d(2)        )        self.conv4 = nn.Sequential(            nn.Conv2d(256, 512, kernel_size=3, padding=1),            nn.BatchNorm2d(512),            nn.ReLU(),            nn.MaxPool2d(2)        )        self.fc = nn.Sequential(            nn.Flatten(),            nn.Linear(512, 2048),            nn.ReLU(),            nn.Dropout(0.5),            nn.Linear(2048, 512),            nn.ReLU(),            nn.Dropout(0.5),            nn.Linear(512, output_size)        )        self.shortcut1 = nn.Sequential(            nn.Conv2d(1, 64, kernel_size=1, stride=1, padding=0),            nn.MaxPool2d(2)        )        self.shortcut2 = nn.Sequential(            nn.Conv2d(64, 128, kernel_size=1, stride=1, padding=0),            nn.MaxPool2d(2)        )        self.shortcut3 = nn.Sequential(            nn.Conv2d(128, 256, kernel_size=1, stride=1, padding=0),            nn.MaxPool2d(2)        )        self.shortcut4 = nn.Sequential(            nn.Conv2d(256, 512, kernel_size=1, stride=1, padding=0),            nn.MaxPool2d(2)        )    def perturb_zpe_flow(self, data, zpe_idx, feature_size):        batch_mean = torch.mean(data.detach(), dim=0).view(-1)        divisible_size = (batch_mean.size(0) // self.sequence_length) * self.sequence_length        batch_mean_truncated = batch_mean[:divisible_size]        reshaped = batch_mean_truncated.view(-1, self.sequence_length)        perturbation = torch.mean(reshaped, dim=0)        perturbation = torch.tanh(perturbation * 0.3)        momentum = 0.9 if zpe_idx < 4 else 0.7        with torch.no_grad():            self.zpe_flows[zpe_idx] = momentum * self.zpe_flows[zpe_idx] + (1 - momentum) * (1.0 + perturbation)            self.zpe_flows[zpe_idx] = torch.clamp(self.zpe_flows[zpe_idx], 0.8, 1.2)    def apply_zpe(self, x, zpe_idx, spatial=True):        self.perturb_zpe_flow(x, zpe_idx, x.size(1) if spatial else x.size(-1))        flow = self.zpe_flows[zpe_idx]        if spatial:            size = x.size(2) * x.size(3)            flow_expanded = flow.repeat(size // self.sequence_length + 1)[:size].view(1, 1, x.size(2), x.size(3))            flow_expanded = flow_expanded.expand(x.size(0), x.size(1), x.size(2), x.size(3))        else:            flow_expanded = flow.repeat(x.size(-1) // self.sequence_length + 1)[:x.size(-1)].view(1, -1)            flow_expanded = flow_expanded.expand(x.size(0), x.size(-1))        return x * flow_expanded    def forward(self, x):        x = self.apply_zpe(x, 0)        residual = self.shortcut1(x)        x = self.conv1(x) + residual        x = self.apply_zpe(x, 1)        residual = self.shortcut2(x)        x = self.conv2(x) + residual        x = self.apply_zpe(x, 2)        residual = self.shortcut3(x)        x = self.conv3(x) + residual        x = self.apply_zpe(x, 3)        residual = self.shortcut4(x)        x = self.conv4(x) + residual        x = self.apply_zpe(x, 4)        x = self.fc(x)        x = self.apply_zpe(x, 5, spatial=False)        return x    def analyze_zpe_effect(self):        return [torch.mean(torch.abs(flow - 1.0)).item() for flow in self.zpe_flows]# Data Setuptrain_transform = transforms.Compose([    transforms.RandomRotation(20),    transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),    transforms.RandomCrop(28, padding=4),    transforms.ToTensor(),    transforms.Normalize((0.5,), (0.5,)),    transforms.RandomErasing(p=0.5, scale=(0.02, 0.2))])test_transform = transforms.Compose([    transforms.ToTensor(),    transforms.Normalize((0.5,), (0.5,))])train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=train_transform)test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)train_size = int(0.9 * len(train_dataset))val_size = len(train_dataset) - train_sizetrain_subset, val_subset = torch.utils.data.random_split(train_dataset, [train_size, val_size])train_loader = DataLoader(train_subset, batch_size=32, shuffle=True, num_workers=2)val_loader = DataLoader(val_subset, batch_size=32, shuffle=False, num_workers=2)test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=2)# MixUp Functiondef mixup(data, targets, alpha=1.0):    indices = torch.randperm(data.size(0))    shuffled_data = data[indices]    shuffled_targets = targets[indices]    lam = np.random.beta(alpha, alpha)    data = lam * data + (1 - lam) * shuffled_data    return data, targets, shuffled_targets, lam# Training Setupdevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")model = ZPEDeepNet(output_size=10).to(device)criterion = nn.CrossEntropyLoss(label_smoothing=0.1)optimizer = optim.Adam(model.parameters(), lr=0.001)scheduler = CosineAnnealingLR(optimizer, T_max=30)# Training Loopnum_epochs = 30for epoch in range(num_epochs):    model.train()    total_loss = 0    for batch_idx, (data, target) in enumerate(train_loader):        data, target = data.to(device), target.to(device)        data, target_a, target_b, lam = mixup(data, target)        optimizer.zero_grad()        output = model(data)        loss = lam * criterion(output, target_a) + (1 - lam) * criterion(output, target_b)        zpe_effects = model.analyze_zpe_effect()        total_loss = loss + 0.001 * sum(zpe_effects)        total_loss.backward()        optimizer.step()        if batch_idx % 200 == 0:            print(f'Epoch {epoch+1}/{num_epochs}, Batch {batch_idx}, Loss: {loss.item():.4f}, '                  f'ZPE Effects: {zpe_effects}')    scheduler.step()    # Validation    model.eval()    val_correct = 0    val_total = 0    with torch.no_grad():        for data, target in val_loader:            data, target = data.to(device), target.to(device)            output = model(data)            _, predicted = torch.max(output.data, 1)            val_total += target.size(0)            val_correct += (predicted == target).sum().item()    val_acc = 100 * val_correct / val_total    print(f'Epoch {epoch+1}/{num_epochs}, Validation Accuracy: {val_acc:.2f}%')# TTA Functiondef tta_predict(model, data, num_augmentations=10):    model.eval()    outputs = []    with torch.no_grad():        outputs.append(model(data))        aug_transform = transforms.Compose([            transforms.RandomRotation(10),            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),            transforms.Normalize((0.5,), (0.5,))        ])        data_denorm = (data * 0.5) + 0.5        for _ in range(num_augmentations - 1):            aug_data = torch.stack([aug_transform(data_denorm[i].cpu()) for i in range(data.size(0))]).to(device)            output = model(aug_data)            outputs.append(output)    return torch.mean(torch.stack(outputs), dim=0)# Test with TTAmodel.eval()correct = 0total = 0with torch.no_grad():    for data, target in test_loader:        data, target = data.to(device), target.to(device)        output = tta_predict(model, data)        _, predicted = torch.max(output.data, 1)        total += target.size(0)        correct += (predicted == target).sum().item()accuracy = 100 * correct / totalprint(f'Accuracy on test set with TTA: {accuracy:.2f}%')# Save Modeltorch.save(model.state_dict(), '/content/zpe_deepnet_colab.pth')
+
+Epoch 1/30, Batch 0, Loss: 2.4192, ZPE Effects: [0.021655326709151268, 0.019550098106265068, 0.02755345217883587, 0.03837377950549126, 0.1212700828909874, 0.007628971245139837]
+Epoch 1/30, Batch 200, Loss: 1.6879, ZPE Effects: [0.19999998807907104, 0.19382613897323608, 0.13565410673618317, 0.16209664940834045, 0.08785813301801682, 0.14585821330547333]
+Epoch 1/30, Batch 400, Loss: 1.8473, ZPE Effects: [0.19999998807907104, 0.187932550907135, 0.11099984496831894, 0.14948323369026184, 0.0538930781185627, 0.18105940520763397]
+Epoch 1/30, Batch 600, Loss: 1.4046, ZPE Effects: [0.19999998807907104, 0.1839533895254135, 0.10472648590803146, 0.1372363120317459, 0.05365857109427452, 0.18289022147655487]
+Epoch 1/30, Batch 800, Loss: 1.0372, ZPE Effects: [0.19999998807907104, 0.17851229012012482, 0.1061469316482544, 0.1296451836824417, 0.0686790868639946, 0.1968904286623001]
+Epoch 1/30, Batch 1000, Loss: 1.1356, ZPE Effects: [0.19999998807907104, 0.17331427335739136, 0.09730410575866699, 0.116585873067379, 0.07046450674533844, 0.19999998807907104]
+Epoch 1/30, Batch 1200, Loss: 1.4665, ZPE Effects: [0.19999998807907104, 0.17241713404655457, 0.09693427383899689, 0.10056973993778229, 0.08336793631315231, 0.19799678027629852]
+Epoch 1/30, Batch 1400, Loss: 1.5136, ZPE Effects: [0.19999998807907104, 0.1648743599653244, 0.09269457310438156, 0.11107567697763443, 0.06788764148950577, 0.19802029430866241]
+Epoch 1/30, Batch 1600, Loss: 1.6806, ZPE Effects: [0.19999998807907104, 0.16054879128932953, 0.08247547596693039, 0.11817193031311035, 0.07085327059030533, 0.1983654499053955]
+Epoch 1/30, Validation Accuracy: 89.27%
+Epoch 2/30, Batch 0, Loss: 0.8585, ZPE Effects: [0.19999998807907104, 0.17793630063533783, 0.10500629246234894, 0.13361333310604095, 0.059761594980955124, 0.19999998807907104]
+Epoch 2/30, Batch 200, Loss: 1.2366, ZPE Effects: [0.19999998807907104, 0.15311579406261444, 0.08589866012334824, 0.08305642753839493, 0.06352125853300095, 0.19999998807907104]
+Epoch 2/30, Batch 400, Loss: 1.8027, ZPE Effects: [0.19999998807907104, 0.15309777855873108, 0.07883495092391968, 0.0993928536772728, 0.05965932831168175, 0.1912916600704193]
+Epoch 2/30, Batch 600, Loss: 1.3047, ZPE Effects: [0.19999998807907104, 0.1472853720188141, 0.0761910080909729, 0.09331591427326202, 0.036597441881895065, 0.19029562175273895]
+Epoch 2/30, Batch 800, Loss: 1.9660, ZPE Effects: [0.19999998807907104, 0.14519159495830536, 0.0814482793211937, 0.07535268366336823, 0.09096886962652206, 0.19574476778507233]
+Epoch 2/30, Batch 1000, Loss: 1.5042, ZPE Effects: [0.19999998807907104, 0.13727383315563202, 0.07005005329847336, 0.08648693561553955, 0.03558221086859703, 0.19999998807907104]
+Epoch 2/30, Batch 1200, Loss: 1.1419, ZPE Effects: [0.19999998807907104, 0.1360902637243271, 0.06665517389774323, 0.08036094903945923, 0.046750497072935104, 0.19999998807907104]
+Epoch 2/30, Batch 1400, Loss: 1.6068, ZPE Effects: [0.19999998807907104, 0.13301779329776764, 0.06406425684690475, 0.08159463852643967, 0.04427463933825493, 0.19438040256500244]
+Epoch 2/30, Batch 1600, Loss: 1.7361, ZPE Effects: [0.19999998807907104, 0.12882000207901, 0.0637405514717102, 0.07662514597177505, 0.042824115604162216, 0.19257386028766632]
+Epoch 2/30, Validation Accuracy: 94.37%
+Epoch 3/30, Batch 0, Loss: 1.3257, ZPE Effects: [0.19999998807907104, 0.13681258261203766, 0.0771171823143959, 0.09893976897001266, 0.06395518779754639, 0.19999998807907104]
+Epoch 3/30, Batch 200, Loss: 0.8266, ZPE Effects: [0.19999998807907104, 0.12119443714618683, 0.06606771051883698, 0.06636390835046768, 0.05849195644259453, 0.19999998807907104]
+Epoch 3/30, Batch 400, Loss: 1.3533, ZPE Effects: [0.19999998807907104, 0.11897098273038864, 0.05898257717490196, 0.07850443571805954, 0.04784352704882622, 0.19999998807907104]
+Epoch 3/30, Batch 600, Loss: 1.3086, ZPE Effects: [0.19999998807907104, 0.11318027228116989, 0.06393152475357056, 0.06298553198575974, 0.0541972890496254, 0.19999998807907104]
+Epoch 3/30, Batch 800, Loss: 1.1358, ZPE Effects: [0.19999998807907104, 0.1123695969581604, 0.05734686926007271, 0.06544101238250732, 0.04858739301562309, 0.19999998807907104]
+Epoch 3/30, Batch 1000, Loss: 1.0584, ZPE Effects: [0.19999998807907104, 0.10525885969400406, 0.06141382455825806, 0.062189795076847076, 0.06815774738788605, 0.19999998807907104]
+Epoch 3/30, Batch 1200, Loss: 1.6963, ZPE Effects: [0.19999998807907104, 0.10778405517339706, 0.05381803587079048, 0.06247546896338463, 0.04215928539633751, 0.1980605572462082]
+Epoch 3/30, Batch 1400, Loss: 1.4215, ZPE Effects: [0.19999998807907104, 0.1043705865740776, 0.05147698149085045, 0.06873638927936554, 0.05289195850491524, 0.1984364092350006]
+Epoch 3/30, Batch 1600, Loss: 1.3522, ZPE Effects: [0.19999998807907104, 0.10148950666189194, 0.050636328756809235, 0.067123644053936, 0.03876516968011856, 0.19999998807907104]
+Epoch 3/30, Validation Accuracy: 92.17%
+Epoch 4/30, Batch 0, Loss: 1.4809, ZPE Effects: [0.19999998807907104, 0.11572080105543137, 0.06307472288608551, 0.08086643368005753, 0.04934727028012276, 0.1908678263425827]
+Epoch 4/30, Batch 200, Loss: 1.6662, ZPE Effects: [0.19999998807907104, 0.09821736812591553, 0.048823583871126175, 0.053939368575811386, 0.05127985402941704, 0.19477622210979462]
+Epoch 4/30, Batch 400, Loss: 1.1891, ZPE Effects: [0.19999998807907104, 0.09373422712087631, 0.052549779415130615, 0.06147203594446182, 0.019563376903533936, 0.19999998807907104]
+Epoch 4/30, Batch 600, Loss: 1.3619, ZPE Effects: [0.19999998807907104, 0.09434548765420914, 0.0477759949862957, 0.06324619054794312, 0.018584001809358597, 0.19999998807907104]
+Epoch 4/30, Batch 800, Loss: 0.9805, ZPE Effects: [0.19999998807907104, 0.09096144884824753, 0.044744350016117096, 0.055044449865818024, 0.04124743863940239, 0.19999998807907104]
+Epoch 4/30, Batch 1000, Loss: 1.5871, ZPE Effects: [0.19999998807907104, 0.08668021112680435, 0.04518939182162285, 0.05389108881354332, 0.03944312408566475, 0.19632072746753693]
+Epoch 4/30, Batch 1200, Loss: 1.5878, ZPE Effects: [0.19999998807907104, 0.08445335924625397, 0.044297050684690475, 0.06056571006774902, 0.04111461713910103, 0.19953468441963196]
+Epoch 4/30, Batch 1400, Loss: 1.7300, ZPE Effects: [0.19999998807907104, 0.0846620574593544, 0.046810247004032135, 0.03619137033820152, 0.03156595304608345, 0.19894082844257355]
+Epoch 4/30, Batch 1600, Loss: 1.1679, ZPE Effects: [0.19999998807907104, 0.07998515665531158, 0.04257602617144585, 0.05920184776186943, 0.05296074226498604, 0.19999998807907104]
+Epoch 4/30, Validation Accuracy: 95.08%
+Epoch 5/30, Batch 0, Loss: 1.2287, ZPE Effects: [0.19999998807907104, 0.09107257425785065, 0.06104092672467232, 0.05499235540628433, 0.07005597651004791, 0.19999998807907104]
+Epoch 5/30, Batch 200, Loss: 1.2935, ZPE Effects: [0.19999998807907104, 0.07930095493793488, 0.043913450092077255, 0.04908887296915054, 0.053392279893159866, 0.19999998807907104]
+Epoch 5/30, Batch 400, Loss: 0.8108, ZPE Effects: [0.19999998807907104, 0.07491061836481094, 0.0377071276307106, 0.0473087914288044, 0.0487896203994751, 0.19999998807907104]
+Epoch 5/30, Batch 600, Loss: 1.4268, ZPE Effects: [0.19999998807907104, 0.0759982019662857, 0.04062465578317642, 0.05446946620941162, 0.04080848768353462, 0.19834019243717194]
+Epoch 5/30, Batch 800, Loss: 0.6859, ZPE Effects: [0.19999998807907104, 0.0710359737277031, 0.03736164793372154, 0.03486882522702217, 0.047822631895542145, 0.19999998807907104]
+Epoch 5/30, Batch 1000, Loss: 1.6491, ZPE Effects: [0.19999998807907104, 0.07338570803403854, 0.04188726097345352, 0.04716390371322632, 0.042729973793029785, 0.19999998807907104]
+Epoch 5/30, Batch 1200, Loss: 1.3987, ZPE Effects: [0.19999998807907104, 0.06989814341068268, 0.04242055490612984, 0.03731444105505943, 0.044677019119262695, 0.19999998807907104]
+Epoch 5/30, Batch 1400, Loss: 1.4453, ZPE Effects: [0.19999998807907104, 0.06635665893554688, 0.03741304948925972, 0.037307072430849075, 0.025548433884978294, 0.19999998807907104]
+Epoch 5/30, Batch 1600, Loss: 1.6030, ZPE Effects: [0.19999998807907104, 0.06414113193750381, 0.034969449043273926, 0.056369829922914505, 0.04178762435913086, 0.19384682178497314]
+Epoch 5/30, Validation Accuracy: 94.90%
+Epoch 6/30, Batch 0, Loss: 0.9883, ZPE Effects: [0.19999998807907104, 0.0789840817451477, 0.04527508094906807, 0.06965930759906769, 0.047190140932798386, 0.19999998807907104]
+Epoch 6/30, Batch 200, Loss: 1.6362, ZPE Effects: [0.19999998807907104, 0.06395167112350464, 0.03431030735373497, 0.050328172743320465, 0.03556182608008385, 0.19999998807907104]
+Epoch 6/30, Batch 400, Loss: 0.9396, ZPE Effects: [0.19999998807907104, 0.06143789365887642, 0.035940349102020264, 0.037071406841278076, 0.038371600210666656, 0.19999998807907104]
+Epoch 6/30, Batch 600, Loss: 1.5082, ZPE Effects: [0.19999998807907104, 0.06127133592963219, 0.028034662827849388, 0.04962940141558647, 0.017960835248231888, 0.19966326653957367]
+Epoch 6/30, Batch 800, Loss: 1.0404, ZPE Effects: [0.19999998807907104, 0.058291878551244736, 0.032033681869506836, 0.04773992300033569, 0.031991925090551376, 0.1976432055234909]
+Epoch 6/30, Batch 1000, Loss: 1.2201, ZPE Effects: [0.19999998807907104, 0.0574071891605854, 0.030313050374388695, 0.03983992338180542, 0.029441094025969505, 0.19999998807907104]
+Epoch 6/30, Batch 1200, Loss: 1.4111, ZPE Effects: [0.19999998807907104, 0.05712243542075157, 0.033065129071474075, 0.037427451461553574, 0.04861320182681084, 0.1987340897321701]
+Epoch 6/30, Batch 1400, Loss: 1.4548, ZPE Effects: [0.19999998807907104, 0.05764884874224663, 0.030816126614809036, 0.04299532249569893, 0.02603861130774021, 0.19999998807907104]
+Epoch 6/30, Batch 1600, Loss: 1.2749, ZPE Effects: [0.19999998807907104, 0.05576760694384575, 0.0285794734954834, 0.03896137699484825, 0.04038170725107193, 0.19999998807907104]
+Epoch 6/30, Validation Accuracy: 95.02%
+Epoch 7/30, Batch 0, Loss: 0.9123, ZPE Effects: [0.19999998807907104, 0.06339552253484726, 0.04042428731918335, 0.05371218919754028, 0.05230778455734253, 0.19999998807907104]
+Epoch 7/30, Batch 200, Loss: 1.1421, ZPE Effects: [0.19999998807907104, 0.053636278957128525, 0.02949819527566433, 0.038170602172613144, 0.030161237344145775, 0.19999998807907104]
+Epoch 7/30, Batch 400, Loss: 1.4030, ZPE Effects: [0.19999998807907104, 0.05119244009256363, 0.030027413740754128, 0.04072524234652519, 0.047613393515348434, 0.19999998807907104]
+Epoch 7/30, Batch 600, Loss: 1.0151, ZPE Effects: [0.19999998807907104, 0.05158744007349014, 0.02976820431649685, 0.03691748529672623, 0.03869222477078438, 0.19999998807907104]
+Epoch 7/30, Batch 800, Loss: 1.4978, ZPE Effects: [0.19999998807907104, 0.05062595754861832, 0.025915611535310745, 0.04156005382537842, 0.0394422672688961, 0.1995231956243515]
+Epoch 7/30, Batch 1000, Loss: 1.6451, ZPE Effects: [0.19999998807907104, 0.04850667715072632, 0.02836740016937256, 0.044078946113586426, 0.03004486672580242, 0.19839370250701904]
+Epoch 7/30, Batch 1200, Loss: 0.6888, ZPE Effects: [0.19999998807907104, 0.046760596334934235, 0.02673405408859253, 0.03809645399451256, 0.04290873929858208, 0.19999998807907104]
+Epoch 7/30, Batch 1400, Loss: 1.5181, ZPE Effects: [0.19999998807907104, 0.04679013416171074, 0.02774643898010254, 0.039969589561223984, 0.029742015525698662, 0.19999998807907104]
+Epoch 7/30, Batch 1600, Loss: 1.1731, ZPE Effects: [0.19999998807907104, 0.047358669340610504, 0.026099836453795433, 0.04282654449343681, 0.056212782859802246, 0.19999998807907104]
+Epoch 7/30, Validation Accuracy: 95.85%
+Epoch 8/30, Batch 0, Loss: 0.7752, ZPE Effects: [0.19999998807907104, 0.055647969245910645, 0.037039078772068024, 0.047199882566928864, 0.04810289293527603, 0.19999998807907104]
+Epoch 8/30, Batch 200, Loss: 1.0250, ZPE Effects: [0.19999998807907104, 0.044201742857694626, 0.025624513626098633, 0.04843684658408165, 0.03663044050335884, 0.19999998807907104]
+Epoch 8/30, Batch 400, Loss: 1.1158, ZPE Effects: [0.19999998807907104, 0.04447021707892418, 0.02667419984936714, 0.04053100571036339, 0.028889799490571022, 0.19999998807907104]
+Epoch 8/30, Batch 600, Loss: 0.9705, ZPE Effects: [0.19999998807907104, 0.043351661413908005, 0.029775286093354225, 0.025479091331362724, 0.027445316314697266, 0.19999998807907104]
+Epoch 8/30, Batch 800, Loss: 0.6532, ZPE Effects: [0.19999998807907104, 0.04200318083167076, 0.026794183999300003, 0.03088863007724285, 0.04013354703783989, 0.19999998807907104]
+Epoch 8/30, Batch 1000, Loss: 1.6143, ZPE Effects: [0.19999998807907104, 0.04197348281741142, 0.02630765549838543, 0.038687121123075485, 0.03666936233639717, 0.19999998807907104]
+Epoch 8/30, Batch 1200, Loss: 1.4196, ZPE Effects: [0.19999998807907104, 0.040465857833623886, 0.025608373805880547, 0.03630570322275162, 0.03321326896548271, 0.19999998807907104]
+Epoch 8/30, Batch 1400, Loss: 1.4902, ZPE Effects: [0.19999998807907104, 0.04024973139166832, 0.027721941471099854, 0.03725224733352661, 0.027010703459382057, 0.1986764520406723]
+Epoch 8/30, Batch 1600, Loss: 1.3819, ZPE Effects: [0.19999998807907104, 0.04004544019699097, 0.02569829300045967, 0.030630363151431084, 0.03794156387448311, 0.19999998807907104]
+Epoch 8/30, Validation Accuracy: 95.70%
+Epoch 9/30, Batch 0, Loss: 1.2628, ZPE Effects: [0.19999998807907104, 0.05294984579086304, 0.032289016991853714, 0.041102707386016846, 0.06061549112200737, 0.19999998807907104]
+Epoch 9/30, Batch 200, Loss: 1.4378, ZPE Effects: [0.19999998807907104, 0.037587832659482956, 0.029270708560943604, 0.02554715983569622, 0.021871674805879593, 0.19999998807907104]
+Epoch 9/30, Batch 400, Loss: 0.9789, ZPE Effects: [0.19999998807907104, 0.03804469108581543, 0.026935959234833717, 0.029828978702425957, 0.0341789610683918, 0.19999998807907104]
+Epoch 9/30, Batch 600, Loss: 0.8903, ZPE Effects: [0.19999998807907104, 0.03656310960650444, 0.02263876236975193, 0.03505441173911095, 0.02891859970986843, 0.19999998807907104]
+Epoch 9/30, Batch 800, Loss: 0.8537, ZPE Effects: [0.19999998807907104, 0.036570608615875244, 0.02779475413262844, 0.022989047691226006, 0.036217402666807175, 0.19999998807907104]
+Epoch 9/30, Batch 1000, Loss: 1.2287, ZPE Effects: [0.19999998807907104, 0.03672846779227257, 0.02632899396121502, 0.03309577703475952, 0.03900207206606865, 0.19999998807907104]
+Epoch 9/30, Batch 1200, Loss: 1.3202, ZPE Effects: [0.19999998807907104, 0.03321829065680504, 0.023979520425200462, 0.037618186324834824, 0.03228957578539848, 0.19999998807907104]
+Epoch 9/30, Batch 1400, Loss: 0.8226, ZPE Effects: [0.19999998807907104, 0.03468580171465874, 0.025559330359101295, 0.02974764071404934, 0.029957164078950882, 0.19999998807907104]
+Epoch 9/30, Batch 1600, Loss: 0.6828, ZPE Effects: [0.19999998807907104, 0.034846533089876175, 0.025321030989289284, 0.025470197200775146, 0.028889287263154984, 0.19999998807907104]
+Epoch 9/30, Validation Accuracy: 96.13%
+Epoch 10/30, Batch 0, Loss: 0.8757, ZPE Effects: [0.19999998807907104, 0.044540323317050934, 0.0281419288367033, 0.04069012403488159, 0.03564963489770889, 0.19999998807907104]
+Epoch 10/30, Batch 200, Loss: 1.2745, ZPE Effects: [0.1998763382434845, 0.03562283515930176, 0.024682307615876198, 0.031565453857183456, 0.02825680933892727, 0.19999998807907104]
+Epoch 10/30, Batch 400, Loss: 0.7014, ZPE Effects: [0.19999998807907104, 0.03223609924316406, 0.024144841358065605, 0.029021000489592552, 0.028700709342956543, 0.19999998807907104]
+Epoch 10/30, Batch 600, Loss: 1.1938, ZPE Effects: [0.19999998807907104, 0.03437907621264458, 0.02318730391561985, 0.03240722417831421, 0.023952830582857132, 0.19999998807907104]
+Epoch 10/30, Batch 800, Loss: 1.5005, ZPE Effects: [0.19999998807907104, 0.032987918704748154, 0.02323848009109497, 0.03586062416434288, 0.028610264882445335, 0.19999998807907104]
+Epoch 10/30, Batch 1000, Loss: 1.2771, ZPE Effects: [0.19999998807907104, 0.034546684473752975, 0.023156022652983665, 0.03026222065091133, 0.022440863773226738, 0.19999998807907104]
+Epoch 10/30, Batch 1200, Loss: 1.1037, ZPE Effects: [0.1999928206205368, 0.031190598383545876, 0.02096325159072876, 0.03665349632501602, 0.036023952066898346, 0.19999998807907104]
+Epoch 10/30, Batch 1400, Loss: 1.4944, ZPE Effects: [0.19999998807907104, 0.031553056091070175, 0.020759224891662598, 0.02672114409506321, 0.022296298295259476, 0.19999998807907104]
+Epoch 10/30, Batch 1600, Loss: 1.4313, ZPE Effects: [0.19999998807907104, 0.03127002716064453, 0.02159144915640354, 0.03182349354028702, 0.026279067620635033, 0.19999998807907104]
+Epoch 10/30, Validation Accuracy: 96.53%
+Epoch 11/30, Batch 0, Loss: 1.2750, ZPE Effects: [0.19999998807907104, 0.04035083204507828, 0.028633011505007744, 0.0370931513607502, 0.04359957203269005, 0.19999998807907104]
+Epoch 11/30, Batch 200, Loss: 1.1159, ZPE Effects: [0.19999998807907104, 0.03002619743347168, 0.020522011443972588, 0.03259703144431114, 0.031930651515722275, 0.19999998807907104]
+Epoch 11/30, Batch 400, Loss: 1.5143, ZPE Effects: [0.19999998807907104, 0.029680252075195312, 0.021315623074769974, 0.02665853500366211, 0.0252776388078928, 0.19999998807907104]
+Epoch 11/30, Batch 600, Loss: 1.2278, ZPE Effects: [0.19999998807907104, 0.030216051265597343, 0.022759675979614258, 0.03338111564517021, 0.03150618076324463, 0.19999998807907104]
+Epoch 11/30, Batch 800, Loss: 1.2127, ZPE Effects: [0.19999998807907104, 0.028239309787750244, 0.021015286445617676, 0.0313945896923542, 0.028286755084991455, 0.19999998807907104]
+Epoch 11/30, Batch 1000, Loss: 0.7776, ZPE Effects: [0.19999998807907104, 0.02780815400183201, 0.021659327670931816, 0.02510852925479412, 0.03210839256644249, 0.19999998807907104]
+Epoch 11/30, Batch 1200, Loss: 1.6128, ZPE Effects: [0.19999998807907104, 0.029270542785525322, 0.0229409821331501, 0.03045790269970894, 0.02336127869784832, 0.19999998807907104]
+Epoch 11/30, Batch 1400, Loss: 1.4703, ZPE Effects: [0.19999998807907104, 0.028742754831910133, 0.021071255207061768, 0.027389490976929665, 0.03344980627298355, 0.19999998807907104]
+Epoch 11/30, Batch 1600, Loss: 1.4522, ZPE Effects: [0.19999998807907104, 0.02628704346716404, 0.018983125686645508, 0.02782956324517727, 0.033561136573553085, 0.19999998807907104]
+Epoch 11/30, Validation Accuracy: 96.15%
+Epoch 12/30, Batch 0, Loss: 0.9236, ZPE Effects: [0.19999998807907104, 0.03721374273300171, 0.027065623551607132, 0.02954280376434326, 0.044273294508457184, 0.19999998807907104]
+Epoch 12/30, Batch 200, Loss: 1.3128, ZPE Effects: [0.19999995827674866, 0.028543615713715553, 0.021960223093628883, 0.02912384271621704, 0.020857930183410645, 0.19999998807907104]
+Epoch 12/30, Batch 400, Loss: 1.4087, ZPE Effects: [0.19999998807907104, 0.027423501014709473, 0.02226315811276436, 0.025377286598086357, 0.028367413207888603, 0.19999998807907104]
+Epoch 12/30, Batch 600, Loss: 1.2634, ZPE Effects: [0.19999998807907104, 0.029043972492218018, 0.020181549713015556, 0.030716825276613235, 0.02624056302011013, 0.19999998807907104]
+Epoch 12/30, Batch 800, Loss: 0.8641, ZPE Effects: [0.19999998807907104, 0.02873607911169529, 0.020413363352417946, 0.028137028217315674, 0.02759326808154583, 0.19999998807907104]
+Epoch 12/30, Batch 1000, Loss: 1.2978, ZPE Effects: [0.19999998807907104, 0.02819622866809368, 0.020113825798034668, 0.028938567265868187, 0.02326817624270916, 0.19999998807907104]
+Epoch 12/30, Batch 1200, Loss: 0.9364, ZPE Effects: [0.19999998807907104, 0.025961970910429955, 0.019095182418823242, 0.03460056707262993, 0.035875726491212845, 0.19999998807907104]
+Epoch 12/30, Batch 1400, Loss: 1.3003, ZPE Effects: [0.19999998807907104, 0.02731177769601345, 0.01743234507739544, 0.03035048209130764, 0.022015750408172607, 0.19999998807907104]
+Epoch 12/30, Batch 1600, Loss: 1.0695, ZPE Effects: [0.19999998807907104, 0.02780248038470745, 0.01778341643512249, 0.03417577967047691, 0.020545078441500664, 0.19999998807907104]
+Epoch 12/30, Validation Accuracy: 95.88%
+Epoch 13/30, Batch 0, Loss: 0.8494, ZPE Effects: [0.19999998807907104, 0.03697531297802925, 0.026102745905518532, 0.025050951167941093, 0.04201304912567139, 0.19999998807907104]
+Epoch 13/30, Batch 200, Loss: 1.3619, ZPE Effects: [0.19999998807907104, 0.027349604293704033, 0.019856298342347145, 0.020124781876802444, 0.01965196244418621, 0.19999998807907104]
+Epoch 13/30, Batch 400, Loss: 1.4217, ZPE Effects: [0.19999998807907104, 0.027475107461214066, 0.01865330897271633, 0.029583454132080078, 0.025343691930174828, 0.19999998807907104]
+Epoch 13/30, Batch 600, Loss: 0.7265, ZPE Effects: [0.19999998807907104, 0.025662755593657494, 0.016997529193758965, 0.027191579341888428, 0.029966343194246292, 0.19999998807907104]
+Epoch 13/30, Batch 800, Loss: 0.8175, ZPE Effects: [0.19999998807907104, 0.02615453116595745, 0.017968976870179176, 0.028959644958376884, 0.02432009018957615, 0.19999998807907104]
+Epoch 13/30, Batch 1000, Loss: 1.3007, ZPE Effects: [0.19999998807907104, 0.02504373900592327, 0.01937723159790039, 0.023392094299197197, 0.02835022285580635, 0.19999998807907104]
+Epoch 13/30, Batch 1200, Loss: 1.3743, ZPE Effects: [0.19999998807907104, 0.02476438321173191, 0.018791234120726585, 0.020737791433930397, 0.04450801759958267, 0.19999998807907104]
+Epoch 13/30, Batch 1400, Loss: 1.1186, ZPE Effects: [0.19999998807907104, 0.027789771556854248, 0.020875608548521996, 0.02750687673687935, 0.03043912723660469, 0.19999998807907104]
+Epoch 13/30, Batch 1600, Loss: 1.2240, ZPE Effects: [0.19999998807907104, 0.025156451389193535, 0.020705116912722588, 0.02273395098745823, 0.02914431132376194, 0.19999998807907104]
+Epoch 13/30, Validation Accuracy: 96.78%
+Epoch 14/30, Batch 0, Loss: 1.5198, ZPE Effects: [0.19999998807907104, 0.03689105436205864, 0.026673436164855957, 0.030931496992707253, 0.03811364248394966, 0.19999998807907104]
+Epoch 14/30, Batch 200, Loss: 0.7380, ZPE Effects: [0.19999998807907104, 0.026434708386659622, 0.018154000863432884, 0.028874684125185013, 0.025311386212706566, 0.19999998807907104]
+Epoch 14/30, Batch 400, Loss: 1.3503, ZPE Effects: [0.19999998807907104, 0.02357611618936062, 0.015285504050552845, 0.02329360321164131, 0.021095944568514824, 0.19999998807907104]
+Epoch 14/30, Batch 600, Loss: 0.8359, ZPE Effects: [0.19999998807907104, 0.023959709331393242, 0.01656820811331272, 0.026517748832702637, 0.02306269481778145, 0.19999998807907104]
+Epoch 14/30, Batch 800, Loss: 1.0076, ZPE Effects: [0.19999998807907104, 0.02450239658355713, 0.016657723113894463, 0.027375353500247, 0.03615456819534302, 0.19999998807907104]
+Epoch 14/30, Batch 1000, Loss: 0.7665, ZPE Effects: [0.19999998807907104, 0.023258281871676445, 0.016631830483675003, 0.027838636189699173, 0.03511190414428711, 0.19999998807907104]
+Epoch 14/30, Batch 1200, Loss: 0.7253, ZPE Effects: [0.19999998807907104, 0.023413002490997314, 0.01627558469772339, 0.03296709060668945, 0.02236717939376831, 0.19999998807907104]
+Epoch 14/30, Batch 1400, Loss: 0.7768, ZPE Effects: [0.19999998807907104, 0.02234675921499729, 0.017548704519867897, 0.02486267127096653, 0.02810465171933174, 0.19999998807907104]
+Epoch 14/30, Batch 1600, Loss: 0.8715, ZPE Effects: [0.19999998807907104, 0.024394823238253593, 0.017285848036408424, 0.027154970914125443, 0.03780975565314293, 0.19999998807907104]
+Epoch 14/30, Validation Accuracy: 96.88%
+Epoch 15/30, Batch 0, Loss: 1.0870, ZPE Effects: [0.19999998807907104, 0.030200421810150146, 0.02213238552212715, 0.03255772590637207, 0.041414082050323486, 0.19999998807907104]
+Epoch 15/30, Batch 200, Loss: 0.9277, ZPE Effects: [0.19999998807907104, 0.023930300027132034, 0.020447207614779472, 0.022340882569551468, 0.02917001210153103, 0.19999998807907104]
+Epoch 15/30, Batch 400, Loss: 1.2708, ZPE Effects: [0.19999998807907104, 0.023587727919220924, 0.018964970484375954, 0.030626332387328148, 0.02670203521847725, 0.19999998807907104]
+Epoch 15/30, Batch 600, Loss: 1.3067, ZPE Effects: [0.19999998807907104, 0.023384440690279007, 0.01863729953765869, 0.02697387896478176, 0.02948627434670925, 0.19999998807907104]
+Epoch 15/30, Batch 800, Loss: 1.3033, ZPE Effects: [0.19999998807907104, 0.023020315915346146, 0.017073964700102806, 0.026637304574251175, 0.020939171314239502, 0.19999998807907104]
+Epoch 15/30, Batch 1000, Loss: 1.6146, ZPE Effects: [0.19999998807907104, 0.02221543900668621, 0.018509840592741966, 0.026031339541077614, 0.020606625825166702, 0.19999998807907104]
+Epoch 15/30, Batch 1200, Loss: 1.3772, ZPE Effects: [0.19999998807907104, 0.023499954491853714, 0.015934361144900322, 0.02344334125518799, 0.02665722370147705, 0.19999998807907104]
+Epoch 15/30, Batch 1400, Loss: 1.1422, ZPE Effects: [0.19999998807907104, 0.022342145442962646, 0.015120995230972767, 0.025148415938019753, 0.026770401746034622, 0.19999998807907104]
+Epoch 15/30, Batch 1600, Loss: 1.2470, ZPE Effects: [0.19999998807907104, 0.023498594760894775, 0.018829429522156715, 0.024391282349824905, 0.032355811446905136, 0.19999998807907104]
+Epoch 15/30, Validation Accuracy: 96.32%
+Epoch 16/30, Batch 0, Loss: 1.4202, ZPE Effects: [0.19999998807907104, 0.03246364742517471, 0.024122728034853935, 0.03224794939160347, 0.03611140325665474, 0.19999998807907104]
+Epoch 16/30, Batch 200, Loss: 0.6370, ZPE Effects: [0.19999998807907104, 0.02281125821173191, 0.016789663583040237, 0.032581329345703125, 0.0320390947163105, 0.19999998807907104]
+Epoch 16/30, Batch 400, Loss: 0.7884, ZPE Effects: [0.19999998807907104, 0.023115981370210648, 0.01824084483087063, 0.023810124024748802, 0.029047846794128418, 0.19999998807907104]
+Epoch 16/30, Batch 600, Loss: 0.9760, ZPE Effects: [0.19999998807907104, 0.022443532943725586, 0.016240347176790237, 0.0269781481474638, 0.02282043732702732, 0.19999998807907104]
+Epoch 16/30, Batch 800, Loss: 1.0106, ZPE Effects: [0.19999998807907104, 0.020713472738862038, 0.018444443121552467, 0.021519625559449196, 0.03260967880487442, 0.19999998807907104]
+Epoch 16/30, Batch 1000, Loss: 0.7177, ZPE Effects: [0.19999998807907104, 0.02240809239447117, 0.01614755392074585, 0.026874065399169922, 0.021219193935394287, 0.19999998807907104]
+Epoch 16/30, Batch 1200, Loss: 1.3407, ZPE Effects: [0.19999998807907104, 0.02378389798104763, 0.016082990914583206, 0.025489533320069313, 0.027422655373811722, 0.19999998807907104]
+Epoch 16/30, Batch 1400, Loss: 1.0409, ZPE Effects: [0.19999998807907104, 0.022555841132998466, 0.016661489382386208, 0.02719712257385254, 0.031437039375305176, 0.19999998807907104]
+Epoch 16/30, Batch 1600, Loss: 0.7393, ZPE Effects: [0.19999998807907104, 0.02195570431649685, 0.017417073249816895, 0.02289196290075779, 0.027238905429840088, 0.19999998807907104]
+Epoch 16/30, Validation Accuracy: 96.90%
+Epoch 17/30, Batch 0, Loss: 1.0149, ZPE Effects: [0.19999998807907104, 0.03255939483642578, 0.024813545867800713, 0.033877503126859665, 0.03131883218884468, 0.19999998807907104]
+Epoch 17/30, Batch 200, Loss: 1.3134, ZPE Effects: [0.19999998807907104, 0.022401655092835426, 0.017962563782930374, 0.025645030662417412, 0.02535475604236126, 0.19999998807907104]
+Epoch 17/30, Batch 400, Loss: 1.3513, ZPE Effects: [0.19999998807907104, 0.022823894396424294, 0.0174196008592844, 0.02416861057281494, 0.02613168954849243, 0.19999998807907104]
+Epoch 17/30, Batch 600, Loss: 0.8699, ZPE Effects: [0.19999998807907104, 0.022728515788912773, 0.01728125847876072, 0.023537015542387962, 0.036131203174591064, 0.19999998807907104]
+Epoch 17/30, Batch 800, Loss: 1.3479, ZPE Effects: [0.19999998807907104, 0.022201145067811012, 0.01843053102493286, 0.025878239423036575, 0.019528770819306374, 0.19999998807907104]
+Epoch 17/30, Batch 1000, Loss: 1.4588, ZPE Effects: [0.19999998807907104, 0.023904157802462578, 0.017564857378602028, 0.023983491584658623, 0.021413816139101982, 0.19999998807907104]
+Epoch 17/30, Batch 1200, Loss: 1.2074, ZPE Effects: [0.19999998807907104, 0.022675180807709694, 0.017053579911589622, 0.024157464504241943, 0.025354886427521706, 0.19999998807907104]
+Epoch 17/30, Batch 1400, Loss: 1.2866, ZPE Effects: [0.19999998807907104, 0.02483442984521389, 0.01750255934894085, 0.026924801990389824, 0.022020697593688965, 0.19999998807907104]
+Epoch 17/30, Batch 1600, Loss: 1.3433, ZPE Effects: [0.19999998807907104, 0.024255264550447464, 0.018301546573638916, 0.020166147500276566, 0.027212297543883324, 0.19999998807907104]
+Epoch 17/30, Validation Accuracy: 96.97%
+Epoch 18/30, Batch 0, Loss: 1.4098, ZPE Effects: [0.19999998807907104, 0.031525399535894394, 0.02254507504403591, 0.03401254490017891, 0.03166886791586876, 0.19999998807907104]
+Epoch 18/30, Batch 200, Loss: 1.3377, ZPE Effects: [0.19999998807907104, 0.022413600236177444, 0.017469216138124466, 0.027392162010073662, 0.029164982959628105, 0.19999998807907104]
+Epoch 18/30, Batch 400, Loss: 0.8520, ZPE Effects: [0.19999998807907104, 0.02297281101346016, 0.01810593716800213, 0.025746703147888184, 0.02242310158908367, 0.19999998807907104]
+Epoch 18/30, Batch 600, Loss: 1.3616, ZPE Effects: [0.19999998807907104, 0.022474288940429688, 0.016459917649626732, 0.026851236820220947, 0.025734543800354004, 0.19999998807907104]
+Epoch 18/30, Batch 800, Loss: 0.8902, ZPE Effects: [0.19999998807907104, 0.02264697663486004, 0.01731290854513645, 0.023685205727815628, 0.027675176039338112, 0.19999998807907104]
+Epoch 18/30, Batch 1000, Loss: 0.9779, ZPE Effects: [0.19999998807907104, 0.023670827969908714, 0.016424763947725296, 0.024952232837677002, 0.015250563621520996, 0.19999998807907104]
+Epoch 18/30, Batch 1200, Loss: 1.3038, ZPE Effects: [0.19999998807907104, 0.021733546629548073, 0.015244138427078724, 0.023086046800017357, 0.01879873313009739, 0.19999998807907104]
+Epoch 18/30, Batch 1400, Loss: 1.2016, ZPE Effects: [0.19999998807907104, 0.023382961750030518, 0.01769843138754368, 0.026827847585082054, 0.012467813678085804, 0.19999998807907104]
+Epoch 18/30, Batch 1600, Loss: 0.9499, ZPE Effects: [0.19999998807907104, 0.02090557850897312, 0.01651795022189617, 0.02597501315176487, 0.023348117247223854, 0.19999998807907104]
+Epoch 18/30, Validation Accuracy: 96.82%
+Epoch 19/30, Batch 0, Loss: 1.5372, ZPE Effects: [0.19999998807907104, 0.03000711277127266, 0.022876059636473656, 0.025159085169434547, 0.026834452524781227, 0.19999998807907104]
+Epoch 19/30, Batch 200, Loss: 1.1779, ZPE Effects: [0.19978845119476318, 0.023008573800325394, 0.017031967639923096, 0.02492852322757244, 0.027112210169434547, 0.19999998807907104]
+Epoch 19/30, Batch 400, Loss: 0.6680, ZPE Effects: [0.19999998807907104, 0.021361589431762695, 0.015082287602126598, 0.02510831318795681, 0.030332351103425026, 0.19999998807907104]
+Epoch 19/30, Batch 600, Loss: 0.7600, ZPE Effects: [0.19999998807907104, 0.021750951185822487, 0.016524923965334892, 0.02284296788275242, 0.021360624581575394, 0.19999998807907104]
+Epoch 19/30, Batch 800, Loss: 1.0227, ZPE Effects: [0.19999998807907104, 0.022316575050354004, 0.016355765983462334, 0.026141107082366943, 0.025123214349150658, 0.19999998807907104]
+Epoch 19/30, Batch 1000, Loss: 1.3160, ZPE Effects: [0.19999998807907104, 0.022922933101654053, 0.01727196015417576, 0.027080072090029716, 0.01701871119439602, 0.19999998807907104]
+Epoch 19/30, Batch 1200, Loss: 0.9855, ZPE Effects: [0.19999998807907104, 0.02352386713027954, 0.017730260267853737, 0.02476208284497261, 0.02583005465567112, 0.19999998807907104]
+Epoch 19/30, Batch 1400, Loss: 1.6212, ZPE Effects: [0.19999998807907104, 0.020781075581908226, 0.015694940462708473, 0.022721458226442337, 0.022313786670565605, 0.19999998807907104]
+Epoch 19/30, Batch 1600, Loss: 0.7991, ZPE Effects: [0.19999998807907104, 0.020938098430633545, 0.016137778759002686, 0.022916531190276146, 0.025475477799773216, 0.19999998807907104]
+Epoch 19/30, Validation Accuracy: 97.33%
+Epoch 20/30, Batch 0, Loss: 1.0991, ZPE Effects: [0.19999998807907104, 0.02767210081219673, 0.021613216027617455, 0.02544562891125679, 0.030255520716309547, 0.19999998807907104]
+Epoch 20/30, Batch 200, Loss: 1.4308, ZPE Effects: [0.19999998807907104, 0.022011160850524902, 0.017836248502135277, 0.024599885568022728, 0.01810770109295845, 0.19999998807907104]
+Epoch 20/30, Batch 400, Loss: 1.3627, ZPE Effects: [0.19999998807907104, 0.02125248871743679, 0.015580070205032825, 0.022816646844148636, 0.028444064781069756, 0.19999998807907104]
+Epoch 20/30, Batch 600, Loss: 1.0722, ZPE Effects: [0.19999998807907104, 0.021485209465026855, 0.01526731252670288, 0.022595012560486794, 0.024656927213072777, 0.19999998807907104]
+Epoch 20/30, Batch 800, Loss: 1.4530, ZPE Effects: [0.19999998807907104, 0.02239765040576458, 0.016626549884676933, 0.023567307740449905, 0.021219169721007347, 0.19999998807907104]
+Epoch 20/30, Batch 1000, Loss: 1.4091, ZPE Effects: [0.19999998807907104, 0.022021377459168434, 0.01825167052447796, 0.021557891741394997, 0.019763875752687454, 0.19999998807907104]
+Epoch 20/30, Batch 1200, Loss: 0.8343, ZPE Effects: [0.19999998807907104, 0.02105468511581421, 0.016650045290589333, 0.024720430374145508, 0.0203713309019804, 0.19999998807907104]
+Epoch 20/30, Batch 1400, Loss: 1.4819, ZPE Effects: [0.19999998807907104, 0.021014822646975517, 0.015438556671142578, 0.02604219876229763, 0.02811722829937935, 0.19999998807907104]
+Epoch 20/30, Batch 1600, Loss: 1.1283, ZPE Effects: [0.19999998807907104, 0.020733952522277832, 0.01652287319302559, 0.022793365642428398, 0.021246159449219704, 0.19999998807907104]
+Epoch 20/30, Validation Accuracy: 97.38%
+Epoch 21/30, Batch 0, Loss: 1.0812, ZPE Effects: [0.19999998807907104, 0.02364116907119751, 0.018033970147371292, 0.027885092422366142, 0.02655567042529583, 0.19999998807907104]
+Epoch 21/30, Batch 200, Loss: 1.1801, ZPE Effects: [0.19999998807907104, 0.020357608795166016, 0.014908373355865479, 0.02721625566482544, 0.02370319329202175, 0.19999998807907104]
+Epoch 21/30, Batch 400, Loss: 0.7339, ZPE Effects: [0.19999998807907104, 0.02211664989590645, 0.014734053984284401, 0.025601614266633987, 0.024201704189181328, 0.19999998807907104]
+Epoch 21/30, Batch 600, Loss: 1.1836, ZPE Effects: [0.19999998807907104, 0.022451937198638916, 0.01669621467590332, 0.024437952786684036, 0.023167049512267113, 0.19999998807907104]
+Epoch 21/30, Batch 800, Loss: 1.1947, ZPE Effects: [0.19999998807907104, 0.02144731394946575, 0.01684015989303589, 0.02358248271048069, 0.018832921981811523, 0.19999998807907104]
+Epoch 21/30, Batch 1000, Loss: 1.2304, ZPE Effects: [0.19999998807907104, 0.022152531892061234, 0.017549289390444756, 0.024522757157683372, 0.017945921048521996, 0.19999998807907104]
+Epoch 21/30, Batch 1200, Loss: 1.3074, ZPE Effects: [0.19999998807907104, 0.021776868030428886, 0.015587282367050648, 0.026144731789827347, 0.022114967927336693, 0.19999998807907104]
+Epoch 21/30, Batch 1400, Loss: 0.7790, ZPE Effects: [0.19999998807907104, 0.021284068003296852, 0.015783119946718216, 0.022661829367280006, 0.03265378624200821, 0.19999998807907104]
+Epoch 21/30, Batch 1600, Loss: 1.2631, ZPE Effects: [0.19999998807907104, 0.021296238526701927, 0.016041267663240433, 0.027115439996123314, 0.018750309944152832, 0.19999998807907104]
+Epoch 21/30, Validation Accuracy: 97.30%
+Epoch 22/30, Batch 0, Loss: 1.2108, ZPE Effects: [0.19999998807907104, 0.029917597770690918, 0.02066049538552761, 0.029841184616088867, 0.02950451336801052, 0.19999998807907104]
+Epoch 22/30, Batch 200, Loss: 0.8094, ZPE Effects: [0.19999998807907104, 0.021074676886200905, 0.01648266427218914, 0.021825481206178665, 0.02136772871017456, 0.19999998807907104]
+Epoch 22/30, Batch 400, Loss: 0.6462, ZPE Effects: [0.19999998807907104, 0.02112375572323799, 0.015838682651519775, 0.021465396508574486, 0.022483503445982933, 0.19999998807907104]
+Epoch 22/30, Batch 600, Loss: 1.0518, ZPE Effects: [0.19999998807907104, 0.0215492844581604, 0.016550112515687943, 0.022469831630587578, 0.023547161370515823, 0.19999998807907104]
+Epoch 22/30, Batch 800, Loss: 1.2731, ZPE Effects: [0.19999998807907104, 0.020210957154631615, 0.015370083041489124, 0.024402141571044922, 0.019352246075868607, 0.19999998807907104]
+Epoch 22/30, Batch 1000, Loss: 0.6756, ZPE Effects: [0.19999998807907104, 0.02041388861835003, 0.015192532911896706, 0.0234092827886343, 0.02706807851791382, 0.19999998807907104]
+Epoch 22/30, Batch 1200, Loss: 1.3117, ZPE Effects: [0.19999998807907104, 0.0192586537450552, 0.015324926935136318, 0.021304715424776077, 0.02181062661111355, 0.19999998807907104]
+Epoch 22/30, Batch 1400, Loss: 0.6611, ZPE Effects: [0.19999998807907104, 0.019885540008544922, 0.015187871642410755, 0.024499034509062767, 0.021721577271819115, 0.19999998807907104]
+Epoch 22/30, Batch 1600, Loss: 1.3015, ZPE Effects: [0.19999998807907104, 0.021217478439211845, 0.016150308772921562, 0.023614514619112015, 0.02288675308227539, 0.19999998807907104]
+Epoch 22/30, Validation Accuracy: 97.73%
+Epoch 23/30, Batch 0, Loss: 1.2228, ZPE Effects: [0.19999998807907104, 0.028147101402282715, 0.01904888264834881, 0.02765202522277832, 0.025174057111144066, 0.19999998807907104]
+Epoch 23/30, Batch 200, Loss: 0.6423, ZPE Effects: [0.19999998807907104, 0.019898736849427223, 0.015006435103714466, 0.02375437133014202, 0.021669745445251465, 0.19999998807907104]
+Epoch 23/30, Batch 400, Loss: 1.2446, ZPE Effects: [0.19999998807907104, 0.02190321683883667, 0.015896737575531006, 0.023958170786499977, 0.022649431601166725, 0.19999998807907104]
+Epoch 23/30, Batch 600, Loss: 1.3980, ZPE Effects: [0.19999998807907104, 0.020337462425231934, 0.015741456300020218, 0.021271109580993652, 0.019799673929810524, 0.19999998807907104]
+Epoch 23/30, Batch 800, Loss: 1.4020, ZPE Effects: [0.19999998807907104, 0.021324729546904564, 0.016685783863067627, 0.021989155560731888, 0.022056711837649345, 0.19999998807907104]
+Epoch 23/30, Batch 1000, Loss: 1.2248, ZPE Effects: [0.19999998807907104, 0.02053816430270672, 0.015883183106780052, 0.022971583530306816, 0.0210356954485178, 0.19999998807907104]
+Epoch 23/30, Batch 1200, Loss: 1.1602, ZPE Effects: [0.19999998807907104, 0.020890045911073685, 0.015642715618014336, 0.02359703741967678, 0.022667204961180687, 0.19999998807907104]
+Epoch 23/30, Batch 1400, Loss: 1.2648, ZPE Effects: [0.19999998807907104, 0.022000908851623535, 0.016151536256074905, 0.024109018966555595, 0.021638406440615654, 0.19999998807907104]
+Epoch 23/30, Batch 1600, Loss: 1.0691, ZPE Effects: [0.19999998807907104, 0.021724140271544456, 0.015236973762512207, 0.023682845756411552, 0.02230752818286419, 0.19999998807907104]
+Epoch 23/30, Validation Accuracy: 97.35%
+Epoch 24/30, Batch 0, Loss: 1.1502, ZPE Effects: [0.19999998807907104, 0.030497193336486816, 0.01913853920996189, 0.03075634315609932, 0.03150582313537598, 0.19999998807907104]
+Epoch 24/30, Batch 200, Loss: 0.5947, ZPE Effects: [0.19999998807907104, 0.0222051739692688, 0.01698446273803711, 0.023645544424653053, 0.02035929076373577, 0.19999998807907104]
+Epoch 24/30, Batch 400, Loss: 1.0581, ZPE Effects: [0.19999998807907104, 0.02154994010925293, 0.015904784202575684, 0.024915670976042747, 0.02242136001586914, 0.19999998807907104]
+Epoch 24/30, Batch 600, Loss: 1.0782, ZPE Effects: [0.19999998807907104, 0.021224547177553177, 0.015661751851439476, 0.02186635695397854, 0.02470221556723118, 0.19999998807907104]
+Epoch 24/30, Batch 800, Loss: 1.2532, ZPE Effects: [0.19999998807907104, 0.020800519734621048, 0.014979339204728603, 0.023771299049258232, 0.021075475960969925, 0.19999998807907104]
+Epoch 24/30, Batch 1000, Loss: 1.0414, ZPE Effects: [0.19999998807907104, 0.020535219460725784, 0.014146411791443825, 0.023715723305940628, 0.021057700738310814, 0.19999998807907104]
+Epoch 24/30, Batch 1200, Loss: 0.7432, ZPE Effects: [0.19999998807907104, 0.020211433991789818, 0.013441896997392178, 0.02619069814682007, 0.020108414813876152, 0.19999998807907104]
+Epoch 24/30, Batch 1400, Loss: 1.3074, ZPE Effects: [0.19999082386493683, 0.022641897201538086, 0.01620282046496868, 0.023926926776766777, 0.02130678854882717, 0.19999998807907104]
+Epoch 24/30, Batch 1600, Loss: 1.0660, ZPE Effects: [0.19999998807907104, 0.022460712119936943, 0.01614689826965332, 0.023321175947785378, 0.018434882164001465, 0.19999998807907104]
+Epoch 24/30, Validation Accuracy: 97.62%
+Epoch 25/30, Batch 0, Loss: 1.1056, ZPE Effects: [0.19999998807907104, 0.027763819321990013, 0.01861325465142727, 0.025370432063937187, 0.02856525219976902, 0.19999998807907104]
+Epoch 25/30, Batch 200, Loss: 1.1129, ZPE Effects: [0.19999998807907104, 0.021664191037416458, 0.01503376942127943, 0.022015739232301712, 0.02255920134484768, 0.19999998807907104]
+Epoch 25/30, Batch 400, Loss: 0.7630, ZPE Effects: [0.19999998807907104, 0.02067849598824978, 0.014606893062591553, 0.022035324946045876, 0.023242546245455742, 0.19999998807907104]
+Epoch 25/30, Batch 600, Loss: 1.4377, ZPE Effects: [0.19999998807907104, 0.021922564134001732, 0.015925228595733643, 0.022564304992556572, 0.019897734746336937, 0.19999998807907104]
+Epoch 25/30, Batch 800, Loss: 1.1129, ZPE Effects: [0.19989614188671112, 0.022662222385406494, 0.015767574310302734, 0.022918356582522392, 0.024809515103697777, 0.19999998807907104]
+Epoch 25/30, Batch 1000, Loss: 1.0699, ZPE Effects: [0.19999998807907104, 0.022017573937773705, 0.015849722549319267, 0.020244931802153587, 0.02027965895831585, 0.19999998807907104]
+Epoch 25/30, Batch 1200, Loss: 1.0520, ZPE Effects: [0.19999998807907104, 0.02223184145987034, 0.015912581235170364, 0.02329733408987522, 0.02275143936276436, 0.19999998807907104]
+Epoch 25/30, Batch 1400, Loss: 0.8096, ZPE Effects: [0.19999998807907104, 0.018881797790527344, 0.01404585875570774, 0.02212001197040081, 0.024170363321900368, 0.19999998807907104]
+Epoch 25/30, Batch 1600, Loss: 1.1694, ZPE Effects: [0.19999998807907104, 0.021633554250001907, 0.01612955331802368, 0.02409358136355877, 0.02112708054482937, 0.19999998807907104]
+Epoch 25/30, Validation Accuracy: 97.60%
+Epoch 26/30, Batch 0, Loss: 1.0423, ZPE Effects: [0.19999998807907104, 0.02860560454428196, 0.019690407440066338, 0.02541757933795452, 0.03520634397864342, 0.19999998807907104]
+Epoch 26/30, Batch 200, Loss: 1.0111, ZPE Effects: [0.19999998807907104, 0.020150184631347656, 0.01473377924412489, 0.02218707837164402, 0.024917399510741234, 0.19999998807907104]
+Epoch 26/30, Batch 400, Loss: 1.3157, ZPE Effects: [0.19999998807907104, 0.019713997840881348, 0.014507472515106201, 0.022829091176390648, 0.022256243973970413, 0.19999998807907104]
+Epoch 26/30, Batch 600, Loss: 0.8805, ZPE Effects: [0.19999998807907104, 0.020346378907561302, 0.015307939611375332, 0.02337179146707058, 0.02323688380420208, 0.19999998807907104]
+Epoch 26/30, Batch 800, Loss: 1.1696, ZPE Effects: [0.19999998807907104, 0.02134533040225506, 0.015948820859193802, 0.02297123707830906, 0.021268440410494804, 0.19999998807907104]
+Epoch 26/30, Batch 1000, Loss: 1.2534, ZPE Effects: [0.19999998807907104, 0.02119319513440132, 0.015253019519150257, 0.02305576764047146, 0.01969146728515625, 0.19999998807907104]
+Epoch 26/30, Batch 1200, Loss: 0.8153, ZPE Effects: [0.19999998807907104, 0.02126290835440159, 0.015138841234147549, 0.024160517379641533, 0.020375430583953857, 0.19999998807907104]
+Epoch 26/30, Batch 1400, Loss: 1.2186, ZPE Effects: [0.19999998807907104, 0.0201586727052927, 0.014620447531342506, 0.022259999066591263, 0.019946038722991943, 0.19999998807907104]
+Epoch 26/30, Batch 1600, Loss: 1.1189, ZPE Effects: [0.19999998807907104, 0.020758284255862236, 0.015451657585799694, 0.022621989250183105, 0.02382636070251465, 0.19999998807907104]
+Epoch 26/30, Validation Accuracy: 97.50%
+Epoch 27/30, Batch 0, Loss: 1.3012, ZPE Effects: [0.19999998807907104, 0.027952134609222412, 0.01909651793539524, 0.026049494743347168, 0.027900373563170433, 0.19999998807907104]
+Epoch 27/30, Batch 200, Loss: 1.3032, ZPE Effects: [0.19999998807907104, 0.021089017391204834, 0.014947998337447643, 0.023619461804628372, 0.02311312034726143, 0.19999998807907104]
+Epoch 27/30, Batch 400, Loss: 0.7937, ZPE Effects: [0.19999998807907104, 0.019835222512483597, 0.014871418476104736, 0.023186588659882545, 0.020795036107301712, 0.19999998807907104]
+Epoch 27/30, Batch 600, Loss: 0.8647, ZPE Effects: [0.19999998807907104, 0.021232260391116142, 0.015461576171219349, 0.022028839215636253, 0.020570052787661552, 0.19999998807907104]
+Epoch 27/30, Batch 800, Loss: 1.1001, ZPE Effects: [0.19999998807907104, 0.020775092765688896, 0.015334904193878174, 0.02247793786227703, 0.021969592198729515, 0.19999998807907104]
+Epoch 27/30, Batch 1000, Loss: 0.9491, ZPE Effects: [0.19999998807907104, 0.01930530183017254, 0.013911664485931396, 0.02333245240151882, 0.02086176909506321, 0.19999998807907104]
+Epoch 27/30, Batch 1200, Loss: 1.3849, ZPE Effects: [0.19999998807907104, 0.02293853834271431, 0.01704188622534275, 0.021732425317168236, 0.018130743876099586, 0.19999998807907104]
+Epoch 27/30, Batch 1400, Loss: 1.2227, ZPE Effects: [0.19993095099925995, 0.02133418433368206, 0.015488184057176113, 0.021285533905029297, 0.02091207541525364, 0.19999998807907104]
+Epoch 27/30, Batch 1600, Loss: 0.8525, ZPE Effects: [0.19999998807907104, 0.02155677042901516, 0.015812361612915993, 0.02186715602874756, 0.01855264976620674, 0.19999998807907104]
+Epoch 27/30, Validation Accuracy: 97.28%
+Epoch 28/30, Batch 0, Loss: 1.2984, ZPE Effects: [0.19999998807907104, 0.027251720428466797, 0.018199419602751732, 0.02371797524392605, 0.024332953616976738, 0.19999998807907104]
+Epoch 28/30, Batch 200, Loss: 0.9752, ZPE Effects: [0.19999998807907104, 0.019122278317809105, 0.01333849411457777, 0.022557247430086136, 0.02022566832602024, 0.19999998807907104]
+Epoch 28/30, Batch 400, Loss: 1.3604, ZPE Effects: [0.1999216377735138, 0.022783054038882256, 0.016787564381957054, 0.022247089073061943, 0.018437016755342484, 0.19999998807907104]
+Epoch 28/30, Batch 600, Loss: 1.0511, ZPE Effects: [0.19999998807907104, 0.020284665748476982, 0.014902221970260143, 0.022640598937869072, 0.020711708813905716, 0.19999998807907104]
+Epoch 28/30, Batch 800, Loss: 0.8477, ZPE Effects: [0.19999998807907104, 0.02315845526754856, 0.016945529729127884, 0.022477352991700172, 0.0195799358189106, 0.19999998807907104]
+Epoch 28/30, Batch 1000, Loss: 1.2900, ZPE Effects: [0.19999998807907104, 0.021323395892977715, 0.015798961743712425, 0.022458136081695557, 0.02180302143096924, 0.19999998807907104]
+Epoch 28/30, Batch 1200, Loss: 1.0644, ZPE Effects: [0.19999998807907104, 0.020509708672761917, 0.014529419131577015, 0.023361194878816605, 0.02189246378839016, 0.19999998807907104]
+Epoch 28/30, Batch 1400, Loss: 1.3349, ZPE Effects: [0.19999998807907104, 0.021620286628603935, 0.016058266162872314, 0.02224069833755493, 0.017907394096255302, 0.19999998807907104]
+Epoch 28/30, Batch 1600, Loss: 1.2743, ZPE Effects: [0.19999998807907104, 0.020034123212099075, 0.014670992270112038, 0.023100126534700394, 0.019387805834412575, 0.19999998807907104]
+Epoch 28/30, Validation Accuracy: 97.68%
+Epoch 29/30, Batch 0, Loss: 0.9043, ZPE Effects: [0.19999998807907104, 0.028097881004214287, 0.018010450527071953, 0.026564503088593483, 0.028607143089175224, 0.19999998807907104]
+Epoch 29/30, Batch 200, Loss: 1.1764, ZPE Effects: [0.19999998807907104, 0.02119520865380764, 0.015505313873291016, 0.02316504716873169, 0.018603360280394554, 0.19999998807907104]
+Epoch 29/30, Batch 400, Loss: 1.4474, ZPE Effects: [0.19999998807907104, 0.02334601990878582, 0.016541147604584694, 0.023370683193206787, 0.017968714237213135, 0.19999998807907104]
+Epoch 29/30, Batch 600, Loss: 1.2021, ZPE Effects: [0.19999998807907104, 0.02175438404083252, 0.015669656917452812, 0.023591255769133568, 0.018112385645508766, 0.19999998807907104]
+Epoch 29/30, Batch 800, Loss: 1.1062, ZPE Effects: [0.19999998807907104, 0.021501660346984863, 0.01590017043054104, 0.023594236001372337, 0.018565237522125244, 0.19999998807907104]
+Epoch 29/30, Batch 1000, Loss: 1.2981, ZPE Effects: [0.19999998807907104, 0.02044232003390789, 0.014514684677124023, 0.023801935836672783, 0.020792115479707718, 0.19999998807907104]
+Epoch 29/30, Batch 1200, Loss: 1.3537, ZPE Effects: [0.19999998807907104, 0.021747935563325882, 0.015542864799499512, 0.023907482624053955, 0.01959524117410183, 0.19999998807907104]
+Epoch 29/30, Batch 1400, Loss: 0.9314, ZPE Effects: [0.19999998807907104, 0.019945085048675537, 0.014250993728637695, 0.02378634177148342, 0.020866597071290016, 0.19999998807907104]
+Epoch 29/30, Batch 1600, Loss: 1.2619, ZPE Effects: [0.19999998807907104, 0.02074829302728176, 0.015340447425842285, 0.02318967692553997, 0.018968259915709496, 0.19999998807907104]
+Epoch 29/30, Validation Accuracy: 97.38%
+Epoch 30/30, Batch 0, Loss: 1.3367, ZPE Effects: [0.19999998807907104, 0.03472987562417984, 0.02433605305850506, 0.02796914614737034, 0.030459487810730934, 0.19999998807907104]
+Epoch 30/30, Batch 200, Loss: 1.2003, ZPE Effects: [0.19999998807907104, 0.02131648175418377, 0.015368187800049782, 0.0234670527279377, 0.01992948167026043, 0.19999998807907104]
+Epoch 30/30, Batch 400, Loss: 1.1283, ZPE Effects: [0.19999998807907104, 0.020306361839175224, 0.014821636490523815, 0.023336172103881836, 0.019756436347961426, 0.19999998807907104]
+Epoch 30/30, Batch 600, Loss: 0.7420, ZPE Effects: [0.19999998807907104, 0.02012493647634983, 0.014602220617234707, 0.023228371515870094, 0.020222021266818047, 0.19999998807907104]
+Epoch 30/30, Batch 800, Loss: 1.0584, ZPE Effects: [0.19999998807907104, 0.01998230256140232, 0.014203202910721302, 0.023106146603822708, 0.021031010895967484, 0.19999998807907104]
+Epoch 30/30, Batch 1000, Loss: 1.0109, ZPE Effects: [0.19999998807907104, 0.020421398803591728, 0.014621436595916748, 0.02304638735949993, 0.019689369946718216, 0.19999998807907104]
+Epoch 30/30, Batch 1200, Loss: 1.4263, ZPE Effects: [0.19999998807907104, 0.021096600219607353, 0.015455377288162708, 0.023245811462402344, 0.01942676305770874, 0.19999998807907104]
+Epoch 30/30, Batch 1400, Loss: 1.0161, ZPE Effects: [0.19999998807907104, 0.020772600546479225, 0.01503829937428236, 0.022429322823882103, 0.02105478011071682, 0.19999998807907104]
+Epoch 30/30, Batch 1600, Loss: 0.8255, ZPE Effects: [0.19999998807907104, 0.020244313403964043, 0.014227784238755703, 0.02300194464623928, 0.02159649133682251, 0.19999998807907104]
+Epoch 30/30, Validation Accuracy: 97.58%
+Accuracy on test set with TTA: 99.62%
+
+
+

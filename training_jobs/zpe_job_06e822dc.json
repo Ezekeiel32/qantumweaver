@@ -1,0 +1,143 @@
+{
+  "job_id": "zpe_job_06e822dc",
+  "status": "stopped",
+  "current_epoch": 4,
+  "zpe_history": [
+    {
+      "epoch": 1,
+      "zpe_effects": [
+        0.1998872011899948,
+        0.15903660655021667,
+        0.09368687123060226,
+        0.15870226919651031,
+        0.10159709304571152,
+        0.19999998807907104
+      ]
+    },
+    {
+      "epoch": 2,
+      "zpe_effects": [
+        0.1998872011899948,
+        0.1146925836801529,
+        0.06345366686582565,
+        0.09681067615747452,
+        0.0651121661067009,
+        0.19999998807907104
+      ]
+    },
+    {
+      "epoch": 3,
+      "zpe_effects": [
+        0.1998872011899948,
+        0.07761023193597794,
+        0.04388890415430069,
+        0.09849845618009567,
+        0.05478501319885254,
+        0.19999998807907104
+      ]
+    }
+  ],
+  "total_epochs": 75,
+  "accuracy": 98.68,
+  "loss": 1.2978416681289673,
+  "zpe_effects": [
+    0.19999998807907104,
+    0.05889919027686119,
+    0.041530441492795944,
+    0.043809425085783005,
+    0.034689415246248245,
+    0.19797323644161224
+  ],
+  "log_messages": [
+    "Init job: ZPE-Colab-Sim_hnn_step8",
+    "Starting PyTorch training: ZPE-Colab-Sim_hnn_step8",
+    "Device: cuda",
+    "Setting up MNIST dataset...",
+    "DataLoaders created. Train: 1875, Val: 313 batches.",
+    "Model & Optimizer initialized.",
+    "--- Epoch 1/75 ---",
+    "E1 B375/1875 L: 0.9819",
+    "E1 B750/1875 L: 0.8577",
+    "E1 B1125/1875 L: 0.6689",
+    "E1 B1500/1875 L: 1.0332",
+    "E1 END - TrainL: 1.1698, ValAcc: 98.33%, ValL: 0.5095",
+    "ZPE: ['0.1999', '0.1590', '0.0937', '0.1587', '0.1016', '0.2000']",
+    "--- Epoch 2/75 ---",
+    "E2 B375/1875 L: 0.7552",
+    "E2 B750/1875 L: 0.8734",
+    "E2 B1125/1875 L: 1.5829",
+    "E2 B1500/1875 L: 1.0419",
+    "E2 END - TrainL: 1.0416, ValAcc: 98.85%, ValL: 0.4765",
+    "ZPE: ['0.1999', '0.1147', '0.0635', '0.0968', '0.0651', '0.2000']",
+    "--- Epoch 3/75 ---",
+    "E3 B375/1875 L: 0.5216",
+    "E3 B750/1875 L: 1.2126",
+    "E3 B1125/1875 L: 0.5276",
+    "E3 B1500/1875 L: 0.9213",
+    "E3 END - TrainL: 1.0129, ValAcc: 98.68%, ValL: 0.4812",
+    "ZPE: ['0.1999', '0.0776', '0.0439', '0.0985', '0.0548', '0.2000']",
+    "--- Epoch 4/75 ---",
+    "E4 B375/1875 L: 0.7151",
+    "E4 B750/1875 L: 0.7299",
+    "E4 B1125/1875 L: 1.2978",
+    "Stop request received."
+  ],
+  "parameters": {
+    "totalEpochs": 75,
+    "batchSize": 32,
+    "learningRate": 0.0013,
+    "weightDecay": 1.2567843546879078e-05,
+    "momentumParams": [
+      0.94,
+      0.83,
+      0.76,
+      0.7,
+      0.39,
+      0.73
+    ],
+    "strengthParams": [
+      0.2,
+      0.56,
+      0.42,
+      0.61,
+      0.38,
+      0.45
+    ],
+    "noiseParams": [
+      0.18,
+      0.28,
+      0.26,
+      0.45,
+      0.3,
+      0.25
+    ],
+    "couplingParams": [
+      0.82,
+      0.87,
+      0.84,
+      0.81,
+      0.78,
+      0.67
+    ],
+    "quantumCircuitSize": 32,
+    "labelSmoothing": 0.08,
+    "quantumMode": true,
+    "modelName": "ZPE-Colab-Sim_hnn_step8",
+    "baseConfigId": null
+  },
+  "start_time": "2025-06-10T01:33:50.135548",
+  "end_time": null,
+  "gpu_info": {
+    "id": "0",
+    "name": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+    "utilization_gpu_percent": 0.0,
+    "utilization_memory_io_percent": 0.0,
+    "memory_total_mb": 6144.0,
+    "memory_used_mb": 343.0,
+    "memory_free_mb": 5801.0,
+    "memory_used_percent": 5.582682291666667,
+    "temperature_c": 59.0,
+    "power_draw_w": 3.919,
+    "fan_speed_percent": null
+  }
+}

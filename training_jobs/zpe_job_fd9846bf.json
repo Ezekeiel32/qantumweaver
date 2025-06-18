@@ -1,0 +1,85 @@
+{
+  "job_id": "zpe_job_fd9846bf",
+  "status": "failed",
+  "current_epoch": 0,
+  "total_epochs": 50,
+  "accuracy": 0.0,
+  "loss": 0.0,
+  "zpe_effects": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "log_messages": [
+    "Init job: ZPE-Colab-Sim_hnn_step6",
+    "Starting PyTorch training: ZPE-Colab-Sim_hnn_step6",
+    "Device: cuda",
+    "Setting up MNIST dataset...",
+    "DataLoaders created. Train: 1875, Val: 313 batches.",
+    "Model & Optimizer initialized.",
+    "--- Epoch 1/50 ---",
+    "Train Error job zpe_job_fd9846bf: view() received an invalid combination of arguments - got (torch.tensortype), but expected one of:\n * (torch.dtype dtype)\n      didn't match because some of the arguments have invalid types: (\u001b[31;1mtorch.tensortype\u001b[0m)\n * (tuple of ints size)\n      didn't match because some of the arguments have invalid types: (\u001b[31;1mtorch.tensortype\u001b[0m)\n",
+    "Traceback (most recent call last):\n  File \"/home/chezy/Desktop/tetrazpe/zpe_train_api.py\", line 375, in run_training_job\n    optimizer.zero_grad(); output = model(data_mixed)\n                                    ^^^^^^^^^^^^^^^^^\n  File \"/home/chezy/Desktop/tetrazpe/tetrazpe_venv/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1751, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/chezy/Desktop/tetrazpe/tetrazpe_venv/lib/python3.12/site-packages/torch/nn/modules/module.py\", line 1762, in _call_impl\n    return forward_call(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/chezy/Desktop/tetrazpe/zpe_train_api.py\", line 215, in forward\n    x = self.apply_zpe(x, 0); residual = self.shortcut1(x); x = self.conv1(x) + residual\n        ^^^^^^^^^^^^^^^^^^^^\n  File \"/home/chezy/Desktop/tetrazpe/zpe_train_api.py\", line 197, in apply_zpe\n    flow = self.zpe_flows[zpe_idx] * (1 + (((self.zpe_flows[zpe_idx].view(torch.IntTensor).sum() % self.cycle_length) / self.cycle_length) * 0.01))\n                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/chezy/Desktop/tetrazpe/tetrazpe_venv/lib/python3.12/site-packages/torch/_tensor.py\", line 1668, in __torch_function__\n    ret = func(*args, **kwargs)\n          ^^^^^^^^^^^^^^^^^^^^^\nTypeError: view() received an invalid combination of arguments - got (torch.tensortype), but expected one of:\n * (torch.dtype dtype)\n      didn't match because some of the arguments have invalid types: (\u001b[31;1mtorch.tensortype\u001b[0m)\n * (tuple of ints size)\n      didn't match because some of the arguments have invalid types: (\u001b[31;1mtorch.tensortype\u001b[0m)\n\n"
+  ],
+  "parameters": {
+    "totalEpochs": 50,
+    "batchSize": 32,
+    "learningRate": 0.0011,
+    "weightDecay": 1.2567843546879078e-05,
+    "momentumParams": [
+      0.94,
+      0.88,
+      0.81,
+      0.75,
+      0.44,
+      0.72
+    ],
+    "strengthParams": [
+      0.2,
+      0.52,
+      0.38,
+      0.57,
+      0.34,
+      0.45
+    ],
+    "noiseParams": [
+      0.18,
+      0.28,
+      0.26,
+      0.45,
+      0.3,
+      0.25
+    ],
+    "couplingParams": [
+      0.75,
+      0.82,
+      0.79,
+      0.76,
+      0.73,
+      0.6
+    ],
+    "quantumCircuitSize": 32,
+    "labelSmoothing": 0.08,
+    "quantumMode": true,
+    "modelName": "ZPE-Colab-Sim_hnn_step6",
+    "baseConfigId": "zpe_job_c03f31a9"
+  },
+  "start_time": "2025-06-06T14:16:55.643079",
+  "end_time": "2025-06-06T14:16:55.986296",
+  "gpu_info": {
+    "id": "0",
+    "name": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+    "utilization_gpu_percent": 0.0,
+    "utilization_memory_io_percent": 0.0,
+    "memory_total_mb": 6144.0,
+    "memory_used_mb": 464.875,
+    "memory_free_mb": 5679.125,
+    "memory_used_percent": 7.566324869791667,
+    "temperature_c": 47.0,
+    "power_draw_w": 9.297,
+    "fan_speed_percent": null
+  }
+}

@@ -107,16 +107,19 @@ const BlochSphereSketch: React.FC<BlochSphereSketchProps> = ({
             // Label axes
             const labelSize = Math.max(10, sphereRadius / 8);
             p.push();
-            p.fill(p.color('hsl(var(--foreground))')); // Use CSS variable
+            p.fill(p.color('hsl(var(--foreground))'));
             p.noStroke();
             p.textSize(labelSize);
             
-            // Billboarding labels (always face camera) - basic implementation
-            let cam = (p as any)._renderer.camera; // Access internal camera
-            p.push(); p.translate(labelOffset, 0, 0); p.rotateY(-cam.pan()); p.rotateX(-cam.tilt()); p.text("X |+⟩", 0, 0); p.pop();
-            p.push(); p.translate(0, labelOffset, 0); p.rotateY(-cam.pan()); p.rotateX(-cam.tilt()); p.text("Y |+i⟩", 0, 0); p.pop();
-            p.push(); p.translate(0, 0, labelOffset); p.rotateY(-cam.pan()); p.rotateX(-cam.tilt()); p.text("Z |0⟩", 0, 0); p.pop();
-            p.push(); p.translate(0, 0, -labelOffset);p.rotateY(-cam.pan()); p.rotateX(-cam.tilt()); p.text(" |1⟩", 0, 0); p.pop();
+            // Defensive: get cam, pan, tilt
+            let cam = (p as any)._renderer?.camera;
+            const pan = typeof cam?.pan === 'function' ? cam.pan() : 0;
+            const tilt = typeof cam?.tilt === 'function' ? cam.tilt() : 0;
+
+            p.push(); p.translate(labelOffset, 0, 0); p.rotateY(-pan); p.rotateX(-tilt); p.text("X |+⟩", 0, 0); p.pop();
+            p.push(); p.translate(0, labelOffset, 0); p.rotateY(-pan); p.rotateX(-tilt); p.text("Y |+i⟩", 0, 0); p.pop();
+            p.push(); p.translate(0, 0, labelOffset); p.rotateY(-pan); p.rotateX(-tilt); p.text("Z |0⟩", 0, 0); p.pop();
+            p.push(); p.translate(0, 0, -labelOffset);p.rotateY(-pan); p.rotateX(-tilt); p.text(" |1⟩", 0, 0); p.pop();
             p.pop();
 
 

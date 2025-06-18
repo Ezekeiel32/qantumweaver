@@ -1,0 +1,102 @@
+{
+  "job_id": "zpe_job_e94f3441",
+  "status": "failed",
+  "current_epoch": 1,
+  "zpe_history": [
+    {
+      "epoch": 1,
+      "zpe_effects": [
+        0.1998872011899948,
+        0.15095669031143188,
+        0.08788811415433884,
+        0.13595277070999146,
+        0.07268502563238144,
+        0.19999998807907104
+      ]
+    }
+  ],
+  "total_epochs": 50,
+  "accuracy": 98.33,
+  "loss": 0.49494781461767495,
+  "zpe_effects": [
+    0.1998872011899948,
+    0.15095669031143188,
+    0.08788811415433884,
+    0.13595277070999146,
+    0.07268502563238144,
+    0.19999998807907104
+  ],
+  "log_messages": [
+    "Init job: ZPE-Colab-Sim_hnn_step8",
+    "Starting PyTorch training: ZPE-Colab-Sim_hnn_step8",
+    "Device: cuda",
+    "Setting up MNIST dataset...",
+    "DataLoaders created. Train: 1875, Val: 313 batches.",
+    "Model & Optimizer initialized.",
+    "--- Epoch 1/50 ---",
+    "E1 B375/1875 L: 1.0192",
+    "E1 B750/1875 L: 0.6800",
+    "E1 B1125/1875 L: 0.6314",
+    "E1 B1500/1875 L: 0.7562",
+    "Train Error job zpe_job_e94f3441: TrainingLogger.log_epoch() missing 10 required positional arguments: 'total_epochs', 'timestamp', 'model_name', 'base_config_id', 'train_loss', 'val_loss', 'val_accuracy', 'epoch_time', 'params', and 'zpe_effects'",
+    "Traceback (most recent call last):\n  File \"/home/chezy/Desktop/cursor/qantumweaver/app.py\", line 589, in run_training_job\n    training_logger.log_epoch(job_status, epoch_data)\nTypeError: TrainingLogger.log_epoch() missing 10 required positional arguments: 'total_epochs', 'timestamp', 'model_name', 'base_config_id', 'train_loss', 'val_loss', 'val_accuracy', 'epoch_time', 'params', and 'zpe_effects'\n"
+  ],
+  "parameters": {
+    "totalEpochs": 50,
+    "batchSize": 32,
+    "learningRate": 0.0013,
+    "weightDecay": 1.2567843546879078e-05,
+    "momentumParams": [
+      0.95,
+      0.84,
+      0.77,
+      0.71,
+      0.4,
+      0.74
+    ],
+    "strengthParams": [
+      0.19,
+      0.55,
+      0.41,
+      0.6,
+      0.37,
+      0.44
+    ],
+    "noiseParams": [
+      0.17,
+      0.27,
+      0.25,
+      0.44,
+      0.29,
+      0.24
+    ],
+    "couplingParams": [
+      0.78,
+      0.83,
+      0.8,
+      0.77,
+      0.74,
+      0.63
+    ],
+    "quantumCircuitSize": 32,
+    "labelSmoothing": 0.08,
+    "quantumMode": true,
+    "modelName": "ZPE-Colab-Sim_hnn_step8",
+    "baseConfigId": null
+  },
+  "start_time": "2025-06-17T18:00:31.747651",
+  "end_time": "2025-06-17T18:01:44.943395",
+  "gpu_info": {
+    "id": "0",
+    "name": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+    "utilization_gpu_percent": 97.0,
+    "utilization_memory_io_percent": 25.0,
+    "memory_total_mb": 6144.0,
+    "memory_used_mb": 624.875,
+    "memory_free_mb": 5519.125,
+    "memory_used_percent": 10.170491536458334,
+    "temperature_c": 60.0,
+    "power_draw_w": 13.573,
+    "fan_speed_percent": null
+  }
+}
