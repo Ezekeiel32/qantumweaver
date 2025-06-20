@@ -54,7 +54,7 @@
 
     --bg-main: #0a0f1c;
     --bg-panel: #18181b;
-    --bg-glass: rgba(20, 20, 40, 0.7);
+    --bg-glass: #14142880;
     --neon-cyan: #00ffe7;
     --neon-blue: #00aaff;
     --neon-yellow: #ffe066;
@@ -209,29 +209,54 @@ html.dark .p5Canvas {
   font-family: var(--font-source-code-pro), monospace;
 }
 
-/* Minimalistic neon scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-  background: transparent;
+/* Ultra-minimal neon scrollbars */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--neon-cyan);
-  border-radius: 6px;
-  min-height: 24px;
-  transition: background 0.2s;
+.scrollbar-thin:hover {
+  scrollbar-color: #00ffe7 #18181b;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--neon-yellow);
+.scrollbar-thumb-neon-cyan-40 {
+  background: #00ffe766;
+  border-radius: 8px;
 }
-::-webkit-scrollbar-corner {
+.scrollbar-thumb-neon-cyan-80 {
+  background: #00ffe7cc;
+}
+.scrollbar-track-transparent {
   background: transparent;
 }
 
-/* For Firefox */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--neon-cyan) transparent;
+/* Chrome/Safari minimal scrollbar */
+.scroll-area::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+.scroll-area:hover::-webkit-scrollbar-thumb {
+  background: #00ffe7cc;
+  border-radius: 8px;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Neon grid overlay for instrument panels */
+.instrument-grid-overlay {
+  pointer-events: none;
+  background: repeating-linear-gradient(90deg, #00ffe71a 0 1px, transparent 1px 60px),
+    repeating-linear-gradient(180deg, #00ffe71a 0 1px, transparent 1px 60px);
+  opacity: 0.18;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
 }
 
 .retro-scanlines::before {
@@ -251,8 +276,9 @@ html.dark .p5Canvas {
 
 .glass {
   background: var(--bg-glass);
-  backdrop-filter: blur(8px) saturate(1.2);
   border-radius: var(--border-radius);
+  border: 1.5px solid rgba(0,255,255,0.18);
+  box-shadow: 0 4px 32px rgba(0,0,0,0.1);
 }
 
 .neon-btn {
@@ -364,7 +390,7 @@ input:focus, select:focus, textarea:focus {
 .card, .panel {
   background: var(--bg-glass);
   border-radius: var(--border-radius);
-  box-shadow: 0 4px 32px #000a, 0 0 8px var(--neon-cyan);
+  box-shadow: 0 4px 32px rgba(0,0,0,0.1), 0 0 8px var(--neon-cyan);
   color: var(--text-main);
   padding: 2.2rem 2rem;
   margin-bottom: 2.2rem;
@@ -680,16 +706,6 @@ button:hover, .neon-btn:hover {
   font-family: 'Share Tech Mono', 'Space Mono', 'VT323', monospace;
 }
 
-.instrument-grid-overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-  background: repeating-linear-gradient(0deg, rgba(0,255,255,0.08) 0px, transparent 24px),
-              repeating-linear-gradient(90deg, rgba(0,255,255,0.08) 0px, transparent 24px);
-  opacity: 0.18;
-}
-
 .chart-panel, .terminal-panel, .controls-panel {
   width: 100%;
   height: 100%;
@@ -718,4 +734,92 @@ button:hover, .neon-btn:hover {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--neon-yellow);
+}
+
+.dashboard-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+  height: calc(100vh - 6rem); /* Reduced padding for more space */
+}
+
+.chart-panel-container {
+  flex: 0 0 60%; /* Do not grow, do not shrink, base size is 60% of height */
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* Allow shrinking */
+}
+
+.terminal-panel-container {
+  flex: 0 0 40%; /* Do not grow, do not shrink, base size is 40% of height */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* This is key for the child scroll area to work */
+  min-height: 0; /* Allow shrinking */
+}
+
+.controls-panel-container {
+  grid-area: none; /* remove from grid */
+}
+
+/* Base styles for the panels */
+.panel-3d-flat {
+  background: var(--bg-panel, #18181b);
+  border: 2px solid var(--neon-cyan, #00ffe7);
+  border-radius: 12px;
+  box-shadow: 0 0 24px 4px #00f0ff33, 0 0 48px 8px #00aaff22;
+  padding: 1.5rem;
+  font-family: 'Share Tech Mono', 'Space Mono', 'VT323', monospace;
+  color: var(--neon-cyan, #00ffe7);
+  position: relative;
+  overflow: hidden;
+}
+
+.panel-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin-bottom: 1rem;
+  color: var(--neon-cyan, #00ffe7);
+  text-shadow: 0 0 8px var(--neon-cyan, #00ffe7);
+}
+
+.btn-neon {
+  background: transparent;
+  border: 2px solid var(--neon-cyan, #00ffe7);
+  color: var(--neon-cyan, #00ffe7);
+  border-radius: 8px;
+  padding: 0.75rem 1.5rem;
+  font-family: 'Share Tech Mono', monospace;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 8px var(--neon-cyan, #00ffe7);
+}
+
+.btn-neon:hover {
+  background: var(--neon-cyan, #00ffe7);
+  color: #18181b;
+  box-shadow: 0 0 16px var(--neon-cyan, #00ffe7);
+}
+
+.minimal-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--neon-cyan, #00ffe7) transparent;
+}
+
+.minimal-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.minimal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.minimal-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--neon-cyan, #00ffe7);
+  border-radius: 2px;
+}
+
+.minimal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--neon-yellow, #ffe066);
 }
