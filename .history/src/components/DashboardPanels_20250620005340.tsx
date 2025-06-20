@@ -1,0 +1,303 @@
+'use client';
+
+import React, { useRef, useEffect, useState } from 'react';
+import { Card } from './ui/card';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Slider } from './ui/slider';
+import { Switch } from './ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { ScrollArea } from './ui/scroll-area';
+import { Badge } from './ui/badge';
+import { Separator } from './ui/separator';
+import NeonAnalyzerChart from './visualizations/NeonAnalyzerChart';
+
+// Chart Panel Component
+export const ChartPanel: React.FC<{
+  metrics?: { epoch: number; loss: number; accuracy: number; val_loss?: number; val_accuracy?: number }[];
+  jobStatus: any;
+  isLoading: boolean;
+  freeze: () => void;
+  resume: () => void;
+  exportMetrics: () => void;
+  advisorParams?: any; // HS-QNN suggested params
+  onStartAdvisorTraining?: (params: any) => void;
+}> = ({ metrics = [], jobStatus, isLoading, freeze, resume, exportMetrics, advisorParams, onStartAdvisorTraining }) => {
+  // Ensure we have valid metrics data
+  const safeMetrics = metrics || [];
+  
+  // Create traces for the chart
+  const traces = [
+    {
+      data: safeMetrics.map(m => m.accuracy || 0),
+      color: '#00ffe7',
+      label: 'Train Acc'
+    },
+    {
+      data: safeMetrics.map(m => m.val_accuracy || 0),
+      color: '#ff00ff',
+      label: 'Val Acc'
+    },
+    {
+      data: safeMetrics.map(m => m.loss || 0),
+      color: '#ffe066',
+      label: 'Train Loss'
+    },
+    {
+      data: safeMetrics.map(m => m.val_loss || 0),
+      color: '#ff9900',
+      label: 'Val Loss'
+    }
+  ];
+
+  // Responsive chart sizing
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 600, height: 400 });
+  useEffect(() => {
+    const handleResize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setSize({ width: rect.width, height: rect.height });
+      }
+    };
+    handleResize();
+    const ro = new window.ResizeObserver(handleResize);
+    if (containerRef.current) ro.observe(containerRef.current);
+    return () => { if (containerRef.current) ro.unobserve(containerRef.current); };
+  }, []);
+
+  return (
+    <Card className="chart-panel h-full w-full bg-[#0a0f1c] border-neon-blue/30 shadow-neon-blue/20 flex flex-col" style={{ fontFamily: 'Share Tech Mono, Space Mono, VT323, monospace' }}>
+      <div className="chart-header p-4 border-b border-neon-blue/20 relative">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <h3 className="text-xl font-bold text-neon-blue">SPECTRUM ANALYZER</h3>
+            <Badge variant="outline" className={`${jobStatus === 'running' ? 'animate-pulse' : ''} bg-neon-blue/10`}>
+              {jobStatus === 'running' ? 'LIVE' : 'FROZEN'}
+            </Badge>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={jobStatus === 'running' ? freeze : resume}
+              className="neon-btn"
+            >
+              {jobStatus === 'running' ? 'FREEZE' : 'RESUME'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportMetrics}
+              className="neon-btn"
+            >
+              EXPORT
+            </Button>
+          </div>
+        </div>
+      </div>
+      <div className="flex-1 p-4" ref={containerRef}>
+        <NeonAnalyzerChart
+          traces={traces}
+          width={size.width}
+          height={size.height}
+          overlays={[
+            { text: 'Training Metrics', color: '#39ff14', x: 120, y: 40, fontSize: 24 }
+          ]}
+          showLegend
+          yMin={0}
+          yMax={100}
+        />
+      </div>
+    </Card>
+  );
+};
+
+// Terminal Panel Component
+export const TerminalPanel: React.FC<{
+  logs: string[];
+  isPolling: boolean;
+  clearLogs: () => void;
+  exportLogs: () => void;
+  stopJob: () => void;
+}> = ({ logs, isPolling, clearLogs, exportLogs, stopJob }) => {
+  // Only show the last 17 lines
+  const visibleLogs = (logs ?? []).slice(-17);
+  return (
+    <Card className="terminal-panel h-full w-[96%] ml-auto mr-0 bg-black/95 border-neon-green/30 shadow-neon-green/20" style={{ fontFamily: 'Share Tech Mono, Space Mono, VT323, monospace', marginTop: '-8px', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: '18px', borderBottomRightRadius: '18px', boxShadow: '0 0 24px #00ffae44' }}>
+      <div className="terminal-header p-3 border-b border-neon-green/20">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-2 h-2 bg-neon-green rounded-full animate-pulse"></div>
+            <h3 className="text-neon-green font-mono text-sm font-medium">TRAINING LOG</h3>
+            <Badge variant="outline" className="border-neon-green/50 text-neon-green text-xs">{isPolling ? 'ACTIVE' : 'FROZEN'}</Badge>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-neon-green/70 font-mono text-xs">LINES: {(logs ?? []).length}</span>
+            <Button size="sm" variant="outline" className="h-5 px-2 border-neon-green/30 text-neon-green text-xs" onClick={clearLogs}>
+              CLEAR
+            </Button>
+            <Button size="sm" variant="outline" className="h-5 px-2 border-neon-green/30 text-neon-green text-xs" onClick={exportLogs}>
+              EXPORT
+            </Button>
+            <Button size="sm" variant="outline" className="h-5 px-2 border-neon-red/30 text-neon-red text-xs" onClick={stopJob}>
+              STOP
+            </Button>
+          </div>
+        </div>
+      </div>
+      <ScrollArea className="terminal-content h-full">
+        <div className="p-3 space-y-1">
+          {visibleLogs.length === 0 ? (
+            <div className="font-mono text-xs text-neon-blue/70">No logs yet.</div>
+          ) : (
+            visibleLogs.map((line, idx) => (
+              <div key={idx} className="font-mono text-xs text-neon-green whitespace-pre-wrap">
+                {line}
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </Card>
+  );
+};
+
+// Controls Panel Component
+export const ControlsPanel: React.FC = () => {
+  return (
+    <Card className="controls-panel h-full w-full bg-black/90 border-neon-purple/30 shadow-neon-purple/20">
+      <div className="controls-header p-4 border-b border-neon-purple/20">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-neon-purple rounded-full"></div>
+            <h3 className="text-neon-purple font-mono text-sm font-medium">CONTROL CENTER</h3>
+            <Badge variant="outline" className="border-neon-purple/50 text-neon-purple text-xs">
+              READY
+            </Badge>
+          </div>
+        </div>
+      </div>
+      
+      <ScrollArea className="controls-content h-full">
+        <div className="p-4 space-y-6">
+          {/* Training Controls */}
+          <div className="control-section">
+            <h4 className="text-neon-purple font-mono text-sm font-medium mb-3">TRAINING CONTROLS</h4>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-neon-blue font-mono text-xs">AUTO TRAIN</Label>
+                <Switch className="data-[state=checked]:bg-neon-blue" />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label className="text-neon-blue font-mono text-xs">EARLY STOPPING</Label>
+                <Switch className="data-[state=checked]:bg-neon-blue" />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label className="text-neon-blue font-mono text-xs">GRADIENT CLIPPING</Label>
+                <Switch className="data-[state=checked]:bg-neon-blue" />
+              </div>
+            </div>
+          </div>
+
+          <Separator className="bg-neon-purple/20" />
+
+          {/* Hyperparameters */}
+          <div className="control-section">
+            <h4 className="text-neon-purple font-mono text-sm font-medium mb-3">HYPERPARAMETERS</h4>
+            <div className="space-y-4">
+              <div>
+                <Label className="text-neon-blue font-mono text-xs">LEARNING RATE</Label>
+                <div className="flex items-center space-x-2 mt-1">
+                  <Slider defaultValue={[1]} max={100} step={1} className="flex-1" />
+                  <Input 
+                    className="w-16 h-6 bg-black border-neon-blue/30 text-neon-blue text-xs text-center"
+                    defaultValue="0.001"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label className="text-neon-blue font-mono text-xs">BATCH SIZE</Label>
+                <Select defaultValue="32">
+                  <SelectTrigger className="w-full h-8 bg-black border-neon-blue/30 text-neon-blue text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-black border-neon-blue/30">
+                    <SelectItem value="16">16</SelectItem>
+                    <SelectItem value="32">32</SelectItem>
+                    <SelectItem value="64">64</SelectItem>
+                    <SelectItem value="128">128</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-neon-blue font-mono text-xs">EPOCHS</Label>
+                <Input 
+                  className="w-full h-8 bg-black border-neon-blue/30 text-neon-blue text-xs"
+                  defaultValue="100"
+                />
+              </div>
+            </div>
+          </div>
+
+          <Separator className="bg-neon-purple/20" />
+
+          {/* Model Configuration */}
+          <div className="control-section">
+            <h4 className="text-neon-purple font-mono text-sm font-medium mb-3">MODEL CONFIG</h4>
+            <div className="space-y-4">
+              <div>
+                <Label className="text-neon-blue font-mono text-xs">MODEL TYPE</Label>
+                <Select defaultValue="qnn">
+                  <SelectTrigger className="w-full h-8 bg-black border-neon-blue/30 text-neon-blue text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-black border-neon-blue/30">
+                    <SelectItem value="qnn">QUANTUM NEURAL NET</SelectItem>
+                    <SelectItem value="cnn">CONVOLUTIONAL NET</SelectItem>
+                    <SelectItem value="rnn">RECURRENT NET</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-neon-blue font-mono text-xs">OPTIMIZER</Label>
+                <Select defaultValue="adam">
+                  <SelectTrigger className="w-full h-8 bg-black border-neon-blue/30 text-neon-blue text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-black border-neon-blue/30">
+                    <SelectItem value="adam">ADAM</SelectItem>
+                    <SelectItem value="sgd">SGD</SelectItem>
+                    <SelectItem value="rmsprop">RMSPROP</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <Separator className="bg-neon-purple/20" />
+
+          {/* Action Buttons */}
+          <div className="control-section">
+            <h4 className="text-neon-purple font-mono text-sm font-medium mb-3">ACTIONS</h4>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" className="h-8 border-neon-green/30 text-neon-green text-xs">
+                START TRAIN
+              </Button>
+              <Button variant="outline" className="h-8 border-neon-red/30 text-neon-red text-xs">
+                STOP TRAIN
+              </Button>
+              <Button variant="outline" className="h-8 border-neon-blue/30 text-neon-blue text-xs">
+                SAVE MODEL
+              </Button>
+              <Button variant="outline" className="h-8 border-neon-purple/30 text-neon-purple text-xs">
+                LOAD MODEL
+              </Button>
+            </div>
+          </div>
+        </div>
+      </ScrollArea>
+    </Card>
+  );
+}; 

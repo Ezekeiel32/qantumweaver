@@ -1,0 +1,113 @@
+{
+  "job_id": "zpe_job_f93cc54b",
+  "status": "running",
+  "parameters": {
+    "modelName": "ZPE-QuantumWeaver-V1",
+    "totalEpochs": 25,
+    "batchSize": 32,
+    "learningRate": 0.0011,
+    "weightDecay": 0.0001,
+    "momentumParams": [
+      0.9,
+      0.9,
+      0.9,
+      0.9,
+      0.9,
+      0.9
+    ],
+    "strengthParams": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ],
+    "noiseParams": [
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+    ],
+    "couplingParams": [
+      0.11,
+      0.11,
+      0.11,
+      0.11,
+      0.11,
+      0.08
+    ],
+    "quantumCircuitSize": 32,
+    "labelSmoothing": 0.1,
+    "quantumMode": true,
+    "baseConfigId": "zpe_job_d243fa84",
+    "mixupAlpha": 0.2
+  },
+  "start_time": "2025-06-20T05:42:45.555Z",
+  "log_messages": [
+    "Using device: cuda",
+    "Datasets loaded successfully",
+    "Model initialized",
+    "Epoch 1/25 - Batch 0/1875 - Loss: 2.3160",
+    "Epoch 1/25 - Batch 100/1875 - Loss: 0.6198",
+    "Epoch 1/25 - Batch 200/1875 - Loss: 0.2528",
+    "Epoch 1/25 - Batch 300/1875 - Loss: 0.4502",
+    "Epoch 1/25 - Batch 400/1875 - Loss: 0.2684",
+    "Epoch 1/25 - Batch 500/1875 - Loss: 0.2363",
+    "Epoch 1/25 - Batch 600/1875 - Loss: 0.2867",
+    "Epoch 1/25 - Batch 700/1875 - Loss: 0.2097",
+    "Epoch 1/25 - Batch 800/1875 - Loss: 0.1496",
+    "Epoch 1/25 - Batch 900/1875 - Loss: 0.2932",
+    "Epoch 1/25 - Batch 1000/1875 - Loss: 0.2800",
+    "Epoch 1/25 - Batch 1100/1875 - Loss: 0.3834",
+    "Epoch 1/25 - Batch 1200/1875 - Loss: 0.2909",
+    "Epoch 1/25 - Batch 1300/1875 - Loss: 0.1076",
+    "Epoch 1/25 - Batch 1400/1875 - Loss: 0.0171",
+    "Epoch 1/25 - Batch 1500/1875 - Loss: 0.1860",
+    "Epoch 1/25 - Batch 1600/1875 - Loss: 0.0043",
+    "Epoch 1/25 - Batch 1700/1875 - Loss: 0.0668",
+    "Epoch 1/25 - Batch 1800/1875 - Loss: 0.0708",
+    "Epoch 1 completed - Train Acc: 91.75% - Val Acc: 95.46%",
+    "Epoch 2/25 - Batch 0/1875 - Loss: 0.0460",
+    "Epoch 2/25 - Batch 100/1875 - Loss: 0.2549",
+    "Epoch 2/25 - Batch 200/1875 - Loss: 0.0411",
+    "Epoch 2/25 - Batch 300/1875 - Loss: 0.0744",
+    "Epoch 2/25 - Batch 400/1875 - Loss: 0.0351",
+    "Epoch 2/25 - Batch 500/1875 - Loss: 0.1393",
+    "Epoch 2/25 - Batch 600/1875 - Loss: 0.1992",
+    "Epoch 2/25 - Batch 700/1875 - Loss: 0.0221",
+    "Epoch 2/25 - Batch 800/1875 - Loss: 0.1313",
+    "Epoch 2/25 - Batch 900/1875 - Loss: 0.0060",
+    "Epoch 2/25 - Batch 1000/1875 - Loss: 0.0942",
+    "Epoch 2/25 - Batch 1100/1875 - Loss: 0.0708",
+    "Epoch 2/25 - Batch 1200/1875 - Loss: 0.1728",
+    "Epoch 2/25 - Batch 1300/1875 - Loss: 0.1591",
+    "Epoch 2/25 - Batch 1400/1875 - Loss: 0.1645",
+    "Epoch 2/25 - Batch 1500/1875 - Loss: 0.2785",
+    "Epoch 2/25 - Batch 1600/1875 - Loss: 0.0827",
+    "Epoch 2/25 - Batch 1700/1875 - Loss: 0.1178",
+    "Epoch 2/25 - Batch 1800/1875 - Loss: 0.1730",
+    "Epoch 2 completed - Train Acc: 96.35% - Val Acc: 96.58%",
+    "Epoch 3/25 - Batch 0/1875 - Loss: 0.2586",
+    "Epoch 3/25 - Batch 100/1875 - Loss: 0.0512",
+    "Epoch 3/25 - Batch 200/1875 - Loss: 0.0493"
+  ],
+  "metrics": [
+    {
+      "epoch": 1,
+      "train_loss": 0.2745083202039202,
+      "train_accuracy": 91.75333333333333,
+      "val_loss": 0.15852818706522162,
+      "val_accuracy": 95.46
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.1326211387184759,
+      "train_accuracy": 96.35,
+      "val_loss": 0.12175270514741021,
+      "val_accuracy": 96.58
+    }
+  ]
+}
