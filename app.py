@@ -227,7 +227,7 @@ class ZPEDeepNet(nn.Module):
         if self.sequence_length == 0: return # Avoid division by zero
         divisible_size = (batch_mean.size(0) // self.sequence_length) * self.sequence_length
         if divisible_size == 0: return # Not enough data
-        batch_mean_truncated = batch_mean[:divisible_size]
+            batch_mean_truncated = batch_mean[:divisible_size]
         reshaped = batch_mean_truncated.view(-1, self.sequence_length)
         perturbation = torch.mean(reshaped, dim=0)
         perturbation = torch.tanh(perturbation * 0.3)
@@ -243,7 +243,7 @@ class ZPEDeepNet(nn.Module):
         if spatial:
             size = x.size(2) * x.size(3)
             flow_expanded = flow.repeat(size // self.sequence_length + 1)[:size].view(1, 1, x.size(2), x.size(3))
-            flow_expanded = flow_expanded.expand(x.size(0), x.size(1), x.size(2), x.size(3))
+                flow_expanded = flow_expanded.expand(x.size(0), x.size(1), x.size(2), x.size(3))
         else:
             flow_expanded = flow.repeat(x.size(-1) // self.sequence_length + 1)[:x.size(-1)].view(1, -1)
             flow_expanded = flow_expanded.expand(x.size(0), x.size(-1))
@@ -442,7 +442,7 @@ def run_training_job(job_id: str, params: TrainingParameters):
     active_jobs[job_id]["status"] = "running"
     active_jobs[job_id]["start_time"] = time.time()
     active_jobs[job_id]["log_messages"].append("--- [QuantumWeaver-V3 Engine] Training job initiated ---")
-    
+
     try:
         # Data Setup
         active_jobs[job_id]["log_messages"].append("Setting up data transforms...")
@@ -486,11 +486,11 @@ def run_training_job(job_id: str, params: TrainingParameters):
             if active_jobs[job_id]["status"] == "stopped":
                 active_jobs[job_id]["log_messages"].append("Training was stopped by user.")
                 break
-                
+
             active_jobs[job_id]["current_epoch"] = epoch + 1
             model.train()
             epoch_loss = 0
-            
+
             for batch_idx, (data, target) in enumerate(train_loader):
                 data, target = data.to(device), target.to(device)
                 
@@ -526,7 +526,7 @@ def run_training_job(job_id: str, params: TrainingParameters):
                     _, predicted = torch.max(output.data, 1)
                     val_total += target.size(0)
                     val_correct += (predicted == target).sum().item()
-            
+
             val_acc = 100 * val_correct / val_total
             avg_val_loss = val_loss / len(val_loader) if len(val_loader) > 0 else 0
             
@@ -616,21 +616,21 @@ async def call_simulate_zpe(job_id: str) -> str:
 async def start_training_endpoint(params: TrainingParameters, background_tasks: BackgroundTasks):
     logger.info(f"/api/train called with parameters: {params.model_dump_json()}")
     try:
-        job_id = f"zpe_job_{str(uuid.uuid4())[:8]}"
-        active_jobs[job_id] = {
+    job_id = f"zpe_job_{str(uuid.uuid4())[:8]}"
+    active_jobs[job_id] = {
             "job_id": job_id, "status": "pending", "current_epoch": 0,
             "total_epochs": params.total_epochs, "accuracy": 0.0, "loss": 0.0,
             "zpe_effects": [0.0] * 6, "log_messages": [f"Init job: {params.model_name}"],
-            "parameters": params.model_dump(), "start_time": None, "end_time": None,
+        "parameters": params.model_dump(), "start_time": None, "end_time": None,
             "gpu_info": get_gpu_usage_info_internal(), "metrics_history": []
         }
         
         if params.base_config_id:
             active_jobs[job_id]["log_messages"].append(f"Attempting to use base_config_id: {params.base_config_id}.")
         
-        save_job_status(job_id)
-        background_tasks.add_task(run_training_job, job_id, params)
-        return {"status": "training_started", "job_id": job_id}
+    save_job_status(job_id)
+    background_tasks.add_task(run_training_job, job_id, params)
+    return {"status": "training_started", "job_id": job_id}
     except Exception as e:
         logger.error(f"Error in /api/train: {e}\n{traceback.format_exc()}")
         return JSONResponse(status_code=500, content={"error": str(e), "traceback": traceback.format_exc()})

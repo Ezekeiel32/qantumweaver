@@ -43,3 +43,43 @@ next-env.d.ts
 # firebase
 firebase-debug.log
 firestore-debug.log
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# OS files
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+
+# History and temp
+.history/
+*.swp
+
+# Data and models (if not needed in git)
+data/
+models/
+
+# Ignore CSVs and other large data files
+*.csv
+*.h5
+*.pt
+*.joblib
+*.json
+
+# Ignore environment files
+.env
+.env.*
