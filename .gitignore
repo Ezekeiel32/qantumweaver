@@ -101,6 +101,7 @@ data/
 
 # Ignore virtual environments
 venv/
+.venv/
 .env/
 __pycache__/
 *.pyc
@@ -114,3 +115,6 @@ Thumbs.db
 # Ignore backup files
 *~
 *.bak
+
+# Ignore node_modules (for JS/TS projects)
+node_modules/
