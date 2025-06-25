@@ -1,0 +1,1893 @@
+
+import React, { useState, useEffect } from "react";
+import { Dataset } from "@/entities/Dataset";
+import { InvokeLLM } from "@/integrations/Core";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Search, Filter, Star, Download, ExternalLink, Sparkles, Heart, TrendingUp } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+
+import SearchBar from "../components/discover/SearchBar";
+import DatasetCard from "../components/discover/DatasetCard";
+import FilterPanel from "../components/discover/FilterPanel";
+import AIRecommendations from "../components/discover/AIRecommendations";
+
+export default function DiscoverPage() {
+  const [datasets, setDatasets] = useState([]);
+  const [filteredDatasets, setFilteredDatasets] = useState([]);
+  const [activeSource, setActiveSource] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filters, setFilters] = useState({
+    category: "all",
+    size: "all",
+    rating: "all"
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [aiRecommendations, setAiRecommendations] = useState([]);
+  const [showFilters, setShowFilters] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState({});
+
+  useEffect(() => {
+    loadDatasets();
+    generateAIRecommendations();
+  }, []);
+
+  useEffect(() => {
+    applyFilters();
+  }, [datasets, activeSource, searchQuery, filters]);
+
+  const loadDatasets = async () => {
+    setIsLoading(true);
+    try {
+      const data = await Dataset.list("-created_date", 50);
+      setDatasets(data);
+    } catch (error) {
+      console.error("Error loading datasets:", error);
+    }
+    setIsLoading(false);
+  };
+
+  const generateAIRecommendations = async () => {
+    try {
+      const response = await InvokeLLM({
+        prompt: `Generate 3 trending dataset recommendations for machine learning projects. Focus on popular, high-quality datasets across different domains like computer vision, NLP, and structured data. For each recommendation, provide: name, brief description, and why it's trending.`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            recommendations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  description: { type: "string" },
+                  reason: { type: "string" },
+                  category: { type: "string" }
+                }
+              }
+            }
+          }
+        }
+      });
+      setAiRecommendations(response.recommendations || []);
+    } catch (error) {
+      console.error("Error generating AI recommendations:", error);
+    }
+  };
+
+  const applyFilters = () => {
+    let filtered = [...datasets];
+
+    // Source filter
+    if (activeSource !== "all") {
+      filtered = filtered.filter(dataset => dataset.source === activeSource);
+    }
+
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(dataset =>
+        dataset.name.toLowerCase().includes(query) ||
+        dataset.description?.toLowerCase().includes(query) ||
+        dataset.tags?.some(tag => tag.toLowerCase().includes(query))
+      );
+    }
+
+    // Category filter
+    if (filters.category !== "all") {
+      filtered = filtered.filter(dataset => dataset.category === filters.category);
+    }
+
+    // Size filter
+    if (filters.size !== "all") {
+      const sizeRanges = {
+        small: [0, 100],
+        medium: [100, 1000],
+        large: [1000, Infinity]
+      };
+      const [min, max] = sizeRanges[filters.size];
+      filtered = filtered.filter(dataset => 
+        dataset.size_mb >= min && dataset.size_mb < max
+      );
+    }
+
+    // Rating filter
+    if (filters.rating !== "all") {
+      const minRating = parseInt(filters.rating);
+      filtered = filtered.filter(dataset => dataset.rating >= minRating);
+    }
+
+    setFilteredDatasets(filtered);
+  };
+
+  const handleSearch = async (query) => {
+    setSearchQuery(query);
+    
+    if (query.trim()) {
+      // Generate AI-enhanced search results
+      try {
+        const response = await InvokeLLM({
+        prompt: `Based on the search query "${query}", suggest relevant dataset types and keywords that would be useful for machine learning projects. Provide specific dataset names if possible.`,
+          add_context_from_internet: true,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              suggestions: {
+                type: "array",
+                items: { type: "string" }
+              },
+              datasets: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    source: { type: "string" },
+                    description: { type: "string" }
+                  }
+                }
+              }
+            }
+          }
+        });
+        
+        // Create suggested datasets if they don't exist
+        if (response.datasets) {
+          for (const suggested of response.datasets) {
+            const exists = datasets.some(d => d.name.toLowerCase() === suggested.name.toLowerCase());
+            if (!exists) {
+              const newDataset = await Dataset.create({
+                name: suggested.name,
+                source: suggested.source || "kaggle",
+                identifier: suggested.name.toLowerCase().replace(/\s+/g, "-"),
+                description: suggested.description,
+                category: "other",
+                rating: 4.0,
+                tags: [query]
+              });
+            }
+          }
+          await loadDatasets();
+        }
+      } catch (error) {
+        console.error("Error enhancing search:", error);
+      }
+    }
+  };
+
+  const toggleFavorite = async (datasetId) => {
+    try {
+      const dataset = datasets.find(d => d.id === datasetId);
+      if (dataset) {
+        await Dataset.update(datasetId, {
+          is_favorited: !dataset.is_favorited
+        });
+        await loadDatasets();
+      }
+    } catch (error) {
+      console.error("Error toggling favorite:", error);
+    }
+  };
+
+  const handleDownload = async (dataset) => {
+    setDownloadStatus(prev => ({ ...prev, [dataset.id]: { status: 'downloading' } }));
+    toast.info(`Starting download for ${dataset.name}...`);
+
+    try {
+      const res = await fetch("/api/datasets/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: dataset.source,
+          identifier: dataset.identifier,
+          dest_dir: `datasets/${dataset.source}`,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.status === 'success') {
+        setDownloadStatus(prev => ({ ...prev, [dataset.id]: { status: 'success', message: data.message } }));
+        toast.success(`${dataset.name} downloaded successfully!`, {
+          description: data.message,
+        });
+        await Dataset.update(dataset.id, { download_count: (dataset.download_count || 0) + 1 });
+        await loadDatasets();
+      } else {
+        throw new Error(data.message || 'Download failed');
+      }
+    } catch (err) {
+      setDownloadStatus(prev => ({ ...prev, [dataset.id]: { status: 'error', message: err.message } }));
+      toast.error(`Download failed for ${dataset.name}`, {
+        description: err.message,
+      });
+    }
+  };
+
+  return (
+    <div className="min-h-screen p-6 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
+                Discover <span className="gradient-text">Datasets</span>
+              </h1>
+              <p className="text-gray-600 text-lg">
+                Find the perfect data for your next AI project
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowFilters(!showFilters)}
+                className="flex items-center gap-2 hover-lift"
+              >
+                <Filter className="w-4 h-4" />
+                Filters
+              </Button>
+              <Button
+                onClick={generateAIRecommendations}
+                className="flex items-center gap-2 hover-lift"
+                style={{background: 'var(--gradient-primary)'}}
+              >
+                <Sparkles className="w-4 h-4" />
+                AI Suggest
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Search and Filters */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mb-8"
+        >
+          <SearchBar onSearch={handleSearch} />
+          
+          <div className="mt-6">
+            <Tabs value={activeSource} onValueChange={setActiveSource}>
+              <TabsList className="glass-effect border-0 p-1">
+                <TabsTrigger value="all" className="data-[state=active]:bg-white/30">All Sources</TabsTrigger>
+                <TabsTrigger value="kaggle" className="data-[state=active]:bg-white/30">Kaggle</TabsTrigger>
+                <TabsTrigger value="huggingface" className="data-[state=active]:bg-white/30">Hugging Face</TabsTrigger>
+                <TabsTrigger value="github" className="data-[state=active]:bg-white/30">GitHub</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          <AnimatePresence>
+            {showFilters && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-4"
+              >
+                <FilterPanel filters={filters} onFiltersChange={setFilters} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+
+        {/* AI Recommendations */}
+        {aiRecommendations.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="mb-8"
+          >
+            <AIRecommendations recommendations={aiRecommendations} />
+          </motion.div>
+        )}
+
+        {/* Results */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+        >
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-semibold text-gray-900">
+              {filteredDatasets.length} Dataset{filteredDatasets.length !== 1 ? 's' : ''} Found
+            </h2>
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <TrendingUp className="w-4 h-4" />
+              Sorted by relevance
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Card key={i} className="glass-effect border-0 animate-pulse">
+                  <CardHeader>
+                    <div className="h-6 bg-gray-200 rounded w-3/4"></div>
+                    <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      <div className="h-4 bg-gray-200 rounded"></div>
+                      <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <AnimatePresence>
+                {filteredDatasets.map((dataset, index) => (
+                  <motion.div
+                    key={dataset.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
+                    <DatasetCard
+                      dataset={dataset}
+                      onToggleFavorite={toggleFavorite}
+                      onDownload={handleDownload}
+                      downloadStatus={downloadStatus[dataset.id]}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {!isLoading && filteredDatasets.length === 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-center py-12"
+            >
+              <Search className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-gray-700 mb-2">No datasets found</h3>
+              <p className="text-gray-500 mb-6">Try adjusting your search or filters</p>
+              <Button 
+                onClick={() => {
+                  setSearchQuery("");
+                  setFilters({ category: "all", size: "all", rating: "all" });
+                  setActiveSource("all");
+                }}
+                variant="outline"
+                className="hover-lift"
+              >
+                Clear All Filters
+              </Button>
+            </motion.div>
+          )}
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
+
+import React, { useState } from "react";
+import { InvokeLLM } from "@/integrations/Core";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Brain, Sparkles, Target, Zap, ArrowRight, Lightbulb } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+
+export default function AdvisorPage() {
+  const [projectGoal, setProjectGoal] = useState("");
+  const [currentData, setCurrentData] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [recommendations, setRecommendations] = useState(null);
+
+  const handleGetAdvice = async () => {
+    if (!projectGoal.trim()) return;
+    
+    setIsLoading(true);
+    try {
+      const response = await InvokeLLM({
+        prompt: `You are an AI data scientist advisor. Based on the project goal "${projectGoal}" ${currentData ? `and current data situation: "${currentData}"` : ''}, provide comprehensive recommendations including:
+        1. Recommended datasets (with specific names if possible)
+        2. Suggested machine learning approaches
+        3. Key parameters to consider
+        4. Potential challenges and solutions
+        5. Success metrics to track
+        
+        Be specific and actionable in your recommendations.`,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            datasets: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  source: { type: "string" },
+                  reason: { type: "string" },
+                  size: { type: "string" }
+                }
+              }
+            },
+            approaches: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  technique: { type: "string" },
+                  description: { type: "string" },
+                  difficulty: { type: "string" }
+                }
+              }
+            },
+            parameters: {
+              type: "object",
+              properties: {
+                learning_rate: { type: "string" },
+                batch_size: { type: "string" },
+                epochs: { type: "string" },
+                architecture: { type: "string" }
+              }
+            },
+            challenges: {
+              type: "array",
+              items: {
+                type: "object", 
+                properties: {
+                  challenge: { type: "string" },
+                  solution: { type: "string" }
+                }
+              }
+            },
+            metrics: {
+              type: "array",
+              items: { type: "string" }
+            }
+          }
+        }
+      });
+      
+      setRecommendations(response);
+    } catch (error) {
+      console.error("Error getting AI advice:", error);
+    }
+    setIsLoading(false);
+  };
+
+  return (
+    <div className="min-h-screen p-6 md:p-8">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-8"
+        >
+          <div className="flex justify-center mb-4">
+            <div className="p-4 rounded-2xl"
+                 style={{background: 'var(--gradient-secondary)'}}>
+              <Brain className="w-12 h-12 text-white" />
+            </div>
+          </div>
+          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
+            AI <span className="gradient-text">Advisor</span>
+          </h1>
+          <p className="text-gray-600 text-lg max-w-2xl mx-auto">
+            Get personalized recommendations for datasets, models, and parameters tailored to your project goals
+          </p>
+        </motion.div>
+
+        {/* Input Form */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <Card className="glass-effect border-0 mb-8">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-blue-600" />
+                Tell us about your project
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-700">
+                  What are you trying to achieve?
+                </label>
+                <Textarea
+                  placeholder="e.g., Build an image classifier to detect plant diseases, Create a chatbot for customer service, Predict stock prices using historical data..."
+                  value={projectGoal}
+                  onChange={(e) => setProjectGoal(e.target.value)}
+                  className="min-h-[100px] bg-white"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-700">
+                  Current data situation (optional)
+                </label>
+                <Input
+                  placeholder="e.g., I have 1000 labeled images, No data yet, CSV with 50k rows..."
+                  value={currentData}
+                  onChange={(e) => setCurrentData(e.target.value)}
+                  className="bg-white"
+                />
+              </div>
+
+              <Button
+                onClick={handleGetAdvice}
+                disabled={isLoading || !projectGoal.trim()}
+                className="w-full py-3 text-lg font-semibold hover-lift"
+                style={{background: 'var(--gradient-primary)'}}
+              >
+                {isLoading ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Getting AI Recommendations...
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5" />
+                    Get AI Recommendations
+                  </div>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Recommendations */}
+        <AnimatePresence>
+          {recommendations && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              {/* Datasets */}
+              {recommendations.datasets && recommendations.datasets.length > 0 && (
+                <Card className="glass-effect border-0">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-blue-100">
+                        <Target className="w-5 h-5 text-blue-600" />
+                      </div>
+                      Recommended Datasets
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-4">
+                      {recommendations.datasets.map((dataset, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="bg-white/50 rounded-xl p-4 hover:bg-white/70 transition-all duration-300"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-gray-900 mb-1">{dataset.name}</h3>
+                              <p className="text-gray-600 text-sm mb-2">{dataset.reason}</p>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline">{dataset.source}</Badge>
+                                {dataset.size && <Badge variant="secondary">{dataset.size}</Badge>}
+                              </div>
+                            </div>
+                            <Button size="sm" variant="ghost">
+                              <ArrowRight className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* ML Approaches */}
+              {recommendations.approaches && recommendations.approaches.length > 0 && (
+                <Card className="glass-effect border-0">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-purple-100">
+                        <Zap className="w-5 h-5 text-purple-600" />
+                      </div>
+                      Suggested Approaches
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-4">
+                      {recommendations.approaches.map((approach, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="bg-white/50 rounded-xl p-4"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <h3 className="font-semibold text-gray-900">{approach.technique}</h3>
+                            <Badge 
+                              variant={approach.difficulty === 'Easy' ? 'default' : 
+                                     approach.difficulty === 'Medium' ? 'secondary' : 'destructive'}
+                            >
+                              {approach.difficulty}
+                            </Badge>
+                          </div>
+                          <p className="text-gray-600 text-sm">{approach.description}</p>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Parameters */}
+              {recommendations.parameters && (
+                <Card className="glass-effect border-0">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-green-100">
+                        <Lightbulb className="w-5 h-5 text-green-600" />
+                      </div>
+                      Key Parameters
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {Object.entries(recommendations.parameters).map(([key, value], index) => (
+                        <motion.div
+                          key={key}
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="bg-white/50 rounded-xl p-4"
+                        >
+                          <div className="text-sm font-semibold text-gray-700 capitalize mb-1">
+                            {key.replace(/_/g, ' ')}
+                          </div>
+                          <div className="text-gray-900 font-mono text-sm">{value}</div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+import React, { useState, useEffect } from "react";
+import { Project } from "@/entities/Project";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { FolderOpen, Plus, Play, Pause, CheckCircle, Settings } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+
+import ProjectCard from "../components/projects/ProjectCard";
+import CreateProjectDialog from "../components/projects/CreateProjectDialog";
+
+export default function ProjectsPage() {
+  const [projects, setProjects] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+
+  useEffect(() => {
+    loadProjects();
+  }, []);
+
+  const loadProjects = async () => {
+    setIsLoading(true);
+    try {
+      const data = await Project.list("-created_date", 20);
+      setProjects(data);
+    } catch (error) {
+      console.error("Error loading projects:", error);
+    }
+    setIsLoading(false);
+  };
+
+  const handleCreateProject = async (projectData) => {
+    try {
+      await Project.create(projectData);
+      await loadProjects();
+      setShowCreateDialog(false);
+    } catch (error) {
+      console.error("Error creating project:", error);
+    }
+  };
+
+  const getStatusStats = () => {
+    const stats = projects.reduce((acc, project) => {
+      acc[project.status] = (acc[project.status] || 0) + 1;
+      return acc;
+    }, {});
+    return stats;
+  };
+
+  const statusStats = getStatusStats();
+
+  return (
+    <div className="min-h-screen p-6 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
+                My <span className="gradient-text">Projects</span>
+              </h1>
+              <p className="text-gray-600 text-lg">
+                Organize and track your machine learning projects
+              </p>
+            </div>
+            <Button
+              onClick={() => setShowCreateDialog(true)}
+              className="flex items-center gap-2 hover-lift"
+              style={{background: 'var(--gradient-primary)'}}
+            >
+              <Plus className="w-5 h-5" />
+              New Project
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Stats Cards */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"
+        >
+          <Card className="glass-effect border-0">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <FolderOpen className="w-5 h-5 text-blue-600" />
+                <div>
+                  <div className="text-2xl font-bold text-gray-900">{projects.length}</div>
+                  <div className="text-sm text-gray-500">Total Projects</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="glass-effect border-0">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <Play className="w-5 h-5 text-green-600" />
+                <div>
+                  <div className="text-2xl font-bold text-gray-900">{statusStats.training || 0}</div>
+                  <div className="text-sm text-gray-500">Training</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="glass-effect border-0">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-emerald-600" />
+                <div>
+                  <div className="text-2xl font-bold text-gray-900">{statusStats.completed || 0}</div>
+                  <div className="text-sm text-gray-500">Completed</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="glass-effect border-0">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-purple-600" />
+                <div>
+                  <div className="text-2xl font-bold text-gray-900">{statusStats.planning || 0}</div>
+                  <div className="text-sm text-gray-500">Planning</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Projects Grid */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          {isLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Card key={i} className="glass-effect border-0 animate-pulse">
+                  <CardHeader>
+                    <div className="h-6 bg-gray-200 rounded w-3/4"></div>
+                    <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      <div className="h-4 bg-gray-200 rounded"></div>
+                      <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : projects.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <AnimatePresence>
+                {projects.map((project, index) => (
+                  <motion.div
+                    key={project.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
+                    <ProjectCard project={project} onUpdate={loadProjects} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-center py-12"
+            >
+              <FolderOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-gray-700 mb-2">No projects yet</h3>
+              <p className="text-gray-500 mb-6">Create your first ML project to get started</p>
+              <Button 
+                onClick={() => setShowCreateDialog(true)}
+                className="hover-lift"
+                style={{background: 'var(--gradient-primary)'}}
+              >
+                <Plus className="w-5 h-5 mr-2" />
+                Create Project
+              </Button>
+            </motion.div>
+          )}
+        </motion.div>
+
+        {/* Create Project Dialog */}
+        <CreateProjectDialog
+          open={showCreateDialog}
+          onOpenChange={setShowCreateDialog}
+          onSubmit={handleCreateProject}
+        />
+      </div>
+    </div>
+  );
+}
+
+import React, { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Search, Mic, Camera } from "lucide-react";
+import { motion } from "framer-motion";
+
+export default function SearchBar({ onSearch }) {
+  const [query, setQuery] = useState("");
+  const [isListening, setIsListening] = useState(false);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSearch(query);
+  };
+
+  const handleVoiceSearch = () => {
+    if ('webkitSpeechRecognition' in window) {
+      const recognition = new window.webkitSpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      setIsListening(true);
+      recognition.start();
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setQuery(transcript);
+        onSearch(transcript);
+        setIsListening(false);
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+    }
+  };
+
+  return (
+    <motion.div
+      whileHover={{ scale: 1.02 }}
+      transition={{ type: "spring", stiffness: 300 }}
+    >
+      <form onSubmit={handleSubmit} className="relative">
+        <div className="relative group">
+          <div className="absolute inset-0 rounded-2xl opacity-75 group-hover:opacity-100 transition-opacity duration-300"
+               style={{background: 'var(--gradient-accent)'}}></div>
+          <div className="relative glass-effect rounded-2xl p-1">
+            <div className="flex items-center bg-white rounded-xl">
+              <Search className="w-5 h-5 text-gray-400 ml-4" />
+              <Input
+                type="text"
+                placeholder="Search datasets, models, or describe your project goals..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="flex-1 border-0 bg-transparent text-lg py-4 px-4 focus:ring-0 placeholder:text-gray-400"
+              />
+              <div className="flex items-center gap-2 mr-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleVoiceSearch}
+                  className={`rounded-lg transition-all duration-200 ${
+                    isListening ? 'bg-red-100 text-red-600' : 'hover:bg-gray-100'
+                  }`}
+                >
+                  <Mic className={`w-4 h-4 ${isListening ? 'animate-pulse' : ''}`} />
+                </Button>
+                <Button
+                  type="submit"
+                  className="rounded-lg px-6 py-2 font-semibold hover-lift"
+                  style={{background: 'var(--gradient-primary)'}}
+                >
+                  Search
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </form>
+    </motion.div>
+  );
+}
+
+
+import React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { 
+  Star, 
+  Download, 
+  ExternalLink, 
+  Heart, 
+  Database,
+  GitBranch,
+  Brain,
+  CheckCircle,
+  XCircle,
+  Loader2
+} from "lucide-react";
+import { motion } from "framer-motion";
+
+const sourceIcons = {
+  kaggle: Database,
+  huggingface: Brain,
+  github: GitBranch
+};
+
+const categoryColors = {
+  computer_vision: "bg-blue-100 text-blue-800 border-blue-200",
+  natural_language: "bg-green-100 text-green-800 border-green-200",
+  time_series: "bg-purple-100 text-purple-800 border-purple-200",
+  structured_data: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  audio: "bg-pink-100 text-pink-800 border-pink-200",
+  reinforcement_learning: "bg-indigo-100 text-indigo-800 border-indigo-200",
+  other: "bg-gray-100 text-gray-800 border-gray-200"
+};
+
+export default function DatasetCard({ dataset, onToggleFavorite, onDownload, downloadStatus }) {
+  const SourceIcon = sourceIcons[dataset.source] || Database;
+
+  const formatSize = (sizeInMB) => {
+    if (!sizeInMB) return "Unknown size";
+    if (sizeInMB < 1024) return `${sizeInMB.toFixed(1)} MB`;
+    return `${(sizeInMB / 1024).toFixed(1)} GB`;
+  };
+
+  const getSourceColor = (source) => {
+    const colors = {
+      kaggle: "text-blue-600 bg-blue-50",
+      huggingface: "text-yellow-600 bg-yellow-50", 
+      github: "text-gray-600 bg-gray-50"
+    };
+    return colors[source] || "text-gray-600 bg-gray-50";
+  };
+
+  const renderDownloadButton = () => {
+    const status = downloadStatus?.status;
+
+    if (status === 'downloading') {
+      return (
+        <Button size="sm" variant="outline" className="flex-1 hover-lift" disabled>
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          Downloading...
+        </Button>
+      );
+    }
+
+    if (status === 'success') {
+      return (
+        <Button size="sm" variant="outline" className="flex-1 border-emerald-500 text-emerald-600 bg-emerald-50 hover:bg-emerald-100" disabled>
+          <CheckCircle className="w-4 h-4 mr-2" />
+          Success
+        </Button>
+      );
+    }
+
+    if (status === 'error') {
+      return (
+        <Button size="sm" variant="destructive" className="flex-1" onClick={() => onDownload(dataset)}>
+          <XCircle className="w-4 h-4 mr-2" />
+          Retry Download
+        </Button>
+      );
+    }
+
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="flex-1 hover-lift"
+        onClick={() => onDownload(dataset)}
+      >
+        <Download className="w-4 h-4 mr-2" />
+        Download
+      </Button>
+    );
+  };
+
+  return (
+    <motion.div
+      whileHover={{ y: -4 }}
+      transition={{ type: "spring", stiffness: 300 }}
+    >
+      <Card className="glass-effect border-0 hover-lift h-full">
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`p-1.5 rounded-lg ${getSourceColor(dataset.source)}`}>
+                  <SourceIcon className="w-4 h-4" />
+                </div>
+                <Badge variant="secondary" className="text-xs capitalize">
+                  {dataset.source}
+                </Badge>
+              </div>
+              <CardTitle className="text-lg font-bold text-gray-900 line-clamp-2">
+                {dataset.name}
+              </CardTitle>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onToggleFavorite(dataset.id)}
+              className="hover:bg-pink-50 hover:text-pink-600 transition-colors"
+            >
+              <Heart 
+                className={`w-4 h-4 ${
+                  dataset.is_favorited 
+                    ? 'fill-pink-500 text-pink-500' 
+                    : 'text-gray-400'
+                }`} 
+              />
+            </Button>
+          </div>
+        </CardHeader>
+        
+        <CardContent className="space-y-4">
+          <p className="text-gray-600 text-sm line-clamp-3">
+            {dataset.description || "No description available"}
+          </p>
+          
+          <div className="flex flex-wrap gap-2">
+            {dataset.category && (
+              <Badge 
+                variant="secondary" 
+                className={`text-xs border ${categoryColors[dataset.category]}`}
+              >
+                {dataset.category.replace(/_/g, ' ')}
+              </Badge>
+            )}
+            {dataset.tags?.slice(0, 2).map((tag, index) => (
+              <Badge key={index} variant="outline" className="text-xs">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+          
+          <div className="flex items-center justify-between text-sm text-gray-500">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1">
+                <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+                <span>{dataset.rating?.toFixed(1) || "N/A"}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Download className="w-4 h-4" />
+                <span>{dataset.download_count || 0}</span>
+              </div>
+            </div>
+            <div className="text-xs font-medium">
+              {formatSize(dataset.size_mb)}
+            </div>
+          </div>
+          
+          <div className="flex gap-2 pt-2">
+            {renderDownloadButton()}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="hover:bg-gray-50"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+
+import React from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+
+export default function FilterPanel({ filters, onFiltersChange }) {
+  const handleFilterChange = (key, value) => {
+    onFiltersChange({
+      ...filters,
+      [key]: value
+    });
+  };
+
+  return (
+    <Card className="glass-effect border-0">
+      <CardContent className="p-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold text-gray-700">Category</Label>
+            <Select value={filters.category} onValueChange={(value) => handleFilterChange('category', value)}>
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                <SelectItem value="computer_vision">Computer Vision</SelectItem>
+                <SelectItem value="natural_language">Natural Language</SelectItem>
+                <SelectItem value="time_series">Time Series</SelectItem>
+                <SelectItem value="structured_data">Structured Data</SelectItem>
+                <SelectItem value="audio">Audio</SelectItem>
+                <SelectItem value="reinforcement_learning">Reinforcement Learning</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold text-gray-700">Dataset Size</Label>
+            <Select value={filters.size} onValueChange={(value) => handleFilterChange('size', value)}>
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="Any Size" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any Size</SelectItem>
+                <SelectItem value="small">Small (&lt; 100MB)</SelectItem>
+                <SelectItem value="medium">Medium (100MB - 1GB)</SelectItem>
+                <SelectItem value="large">Large (&gt; 1GB)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold text-gray-700">Minimum Rating</Label>
+            <Select value={filters.rating} onValueChange={(value) => handleFilterChange('rating', value)}>
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="Any Rating" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any Rating</SelectItem>
+                <SelectItem value="4">4+ Stars</SelectItem>
+                <SelectItem value="3">3+ Stars</SelectItem>
+                <SelectItem value="2">2+ Stars</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+import React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Sparkles, TrendingUp, ArrowRight } from "lucide-react";
+import { motion } from "framer-motion";
+
+export default function AIRecommendations({ recommendations }) {
+  return (
+    <Card className="glass-effect border-0 overflow-hidden">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-xl font-bold text-gray-900">
+          <div className="p-2 rounded-lg"
+               style={{background: 'var(--gradient-secondary)'}}>
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          AI Recommendations
+          <Badge variant="secondary" className="ml-auto">
+            <TrendingUp className="w-3 h-3 mr-1" />
+            Trending
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-6">
+        <div className="grid gap-4">
+          {recommendations.map((rec, index) => (
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.1 }}
+              className="bg-white/50 rounded-xl p-4 hover:bg-white/70 transition-all duration-300 hover-lift"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h3 className="font-semibold text-gray-900 mb-1">{rec.name}</h3>
+                  <p className="text-gray-600 text-sm mb-2">{rec.description}</p>
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <Badge variant="outline" className="text-xs">
+                      {rec.category}
+                    </Badge>
+                    <span>•</span>
+                    <span>{rec.reason}</span>
+                  </div>
+                </div>
+                <Button size="sm" variant="ghost" className="hover:bg-gray-100">
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+import React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { format } from "date-fns";
+import { 
+  Calendar, 
+  Play, 
+  Pause, 
+  CheckCircle, 
+  Settings,
+  MoreVertical,
+  Database
+} from "lucide-react";
+import { motion } from "framer-motion";
+
+const statusConfig = {
+  planning: {
+    icon: Settings,
+    color: "bg-blue-100 text-blue-800",
+    label: "Planning"
+  },
+  data_prep: {
+    icon: Database,
+    color: "bg-yellow-100 text-yellow-800",
+    label: "Data Prep"
+  },
+  training: {
+    icon: Play,
+    color: "bg-green-100 text-green-800",
+    label: "Training"
+  },
+  completed: {
+    icon: CheckCircle,
+    color: "bg-emerald-100 text-emerald-800",
+    label: "Completed"
+  }
+};
+
+export default function ProjectCard({ project, onUpdate }) {
+  const StatusIcon = statusConfig[project.status]?.icon || Settings;
+  const statusColor = statusConfig[project.status]?.color || "bg-gray-100 text-gray-800";
+  const statusLabel = statusConfig[project.status]?.label || project.status;
+
+  return (
+    <motion.div
+      whileHover={{ y: -4 }}
+      transition={{ type: "spring", stiffness: 300 }}
+    >
+      <Card className="glass-effect border-0 hover-lift h-full">
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <CardTitle className="text-lg font-bold text-gray-900 line-clamp-2 mb-2">
+                {project.name}
+              </CardTitle>
+              <Badge className={`${statusColor} border-0`}>
+                <StatusIcon className="w-3 h-3 mr-1" />
+                {statusLabel}
+              </Badge>
+            </div>
+            <Button variant="ghost" size="icon" className="hover:bg-gray-100">
+              <MoreVertical className="w-4 h-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        
+        <CardContent className="space-y-4">
+          <p className="text-gray-600 text-sm line-clamp-3">
+            {project.description || "No description provided"}
+          </p>
+          
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-gray-500 uppercase">Objective</div>
+            <div className="text-sm text-gray-700">{project.objective}</div>
+          </div>
+          
+          {project.datasets && project.datasets.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-gray-500 uppercase">Datasets</div>
+              <div className="flex items-center gap-1 text-sm text-gray-700">
+                <Database className="w-4 h-4" />
+                <span>{project.datasets.length} dataset{project.datasets.length !== 1 ? 's' : ''}</span>
+              </div>
+            </div>
+          )}
+          
+          <div className="flex items-center justify-between text-xs text-gray-500 pt-2 border-t border-gray-100">
+            <div className="flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              <span>{format(new Date(project.created_date), "MMM d, yyyy")}</span>
+            </div>
+            <Button size="sm" variant="outline" className="h-7 px-3 text-xs hover-lift">
+              Open
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+import React, { useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+const objectiveOptions = [
+  "Image Classification",
+  "Object Detection",
+  "Text Classification",
+  "Sentiment Analysis",
+  "Time Series Forecasting",
+  "Regression Analysis",
+  "Clustering",
+  "Recommendation System",
+  "Natural Language Generation",
+  "Speech Recognition",
+  "Other"
+];
+
+export default function CreateProjectDialog({ open, onOpenChange, onSubmit }) {
+  const [projectData, setProjectData] = useState({
+    name: "",
+    description: "",
+    objective: "",
+    status: "planning"
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!projectData.name.trim() || !projectData.objective) return;
+    
+    onSubmit({
+      ...projectData,
+      datasets: [],
+      parameters: {}
+    });
+    
+    setProjectData({
+      name: "",
+      description: "",
+      objective: "",
+      status: "planning"
+    });
+  };
+
+  const handleChange = (field, value) => {
+    setProjectData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-xl font-bold">Create New Project</DialogTitle>
+        </DialogHeader>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Project Name *</Label>
+            <Input
+              id="name"
+              placeholder="e.g., Plant Disease Classifier"
+              value={projectData.name}
+              onChange={(e) => handleChange('name', e.target.value)}
+              className="bg-white"
+              required
+            />
+          </div>
+          
+          <div className="space-y-2">
+            <Label htmlFor="objective">ML Objective *</Label>
+            <Select value={projectData.objective} onValueChange={(value) => handleChange('objective', value)}>
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="Select your ML goal" />
+              </SelectTrigger>
+              <SelectContent>
+                {objectiveOptions.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="space-y-2">
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              placeholder="Describe your project goals and approach..."
+              value={projectData.description}
+              onChange={(e) => handleChange('description', e.target.value)}
+              className="min-h-[80px] bg-white"
+            />
+          </div>
+          
+          <div className="flex justify-end gap-3 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={!projectData.name.trim() || !projectData.objective}
+              style={{background: 'var(--gradient-primary)'}}
+            >
+              Create Project
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+{
+  "name": "Dataset",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Dataset name"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "kaggle",
+        "huggingface",
+        "github"
+      ],
+      "description": "Data source platform"
+    },
+    "identifier": {
+      "type": "string",
+      "description": "Dataset identifier or URL"
+    },
+    "description": {
+      "type": "string",
+      "description": "Dataset description"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "computer_vision",
+        "natural_language",
+        "time_series",
+        "structured_data",
+        "audio",
+        "reinforcement_learning",
+        "other"
+      ],
+      "description": "Dataset category"
+    },
+    "size_mb": {
+      "type": "number",
+      "description": "Dataset size in MB"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Dataset tags"
+    },
+    "download_count": {
+      "type": "number",
+      "default": 0,
+      "description": "Number of downloads"
+    },
+    "rating": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 5,
+      "description": "Dataset rating"
+    },
+    "is_favorited": {
+      "type": "boolean",
+      "default": false,
+      "description": "User has favorited this dataset"
+    }
+  },
+  "required": [
+    "name",
+    "source",
+    "identifier"
+  ]
+}
+
+{
+  "name": "Project",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Project name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Project description"
+    },
+    "objective": {
+      "type": "string",
+      "description": "ML objective (e.g., image classification, text generation)"
+    },
+    "datasets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array of dataset IDs"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "ML training parameters"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "planning",
+        "data_prep",
+        "training",
+        "completed"
+      ],
+      "default": "planning",
+      "description": "Project status"
+    }
+  },
+  "required": [
+    "name",
+    "objective"
+  ]
+}
+
+
+import React from "react";
+import { Link, useLocation } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { 
+  Database, 
+  Search, 
+  Brain, 
+  FolderOpen, 
+  Settings,
+  Sparkles,
+  TrendingUp
+} from "lucide-react";
+import { Toaster } from "@/components/ui/sonner";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarHeader,
+  SidebarFooter,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+
+const navigationItems = [
+  {
+    title: "Discover",
+    url: createPageUrl("Discover"),
+    icon: Search,
+    description: "Find datasets"
+  },
+  {
+    title: "AI Advisor",
+    url: createPageUrl("Advisor"),
+    icon: Brain,
+    description: "Get recommendations"
+  },
+  {
+    title: "Projects",
+    url: createPageUrl("Projects"),
+    icon: FolderOpen,
+    description: "Manage projects"
+  }
+];
+
+export default function Layout({ children, currentPageName }) {
+  const location = useLocation();
+
+  return (
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full">
+        <style>
+          {`
+            :root {
+              --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+              --gradient-accent: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+              --color-primary: #667eea;
+              --color-secondary: #764ba2;
+              --color-accent: #4facfe;
+              --color-emerald: #10b981;
+              --glass-bg: rgba(255, 255, 255, 0.08);
+              --glass-border: rgba(255, 255, 255, 0.12);
+            }
+            
+            .glass-effect {
+              background: var(--glass-bg);
+              backdrop-filter: blur(20px);
+              border: 1px solid var(--glass-border);
+            }
+            
+            .gradient-text {
+              background: var(--gradient-primary);
+              -webkit-background-clip: text;
+              -webkit-text-fill-color: transparent;
+              background-clip: text;
+            }
+            
+            .hover-lift {
+              transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            
+            .hover-lift:hover {
+              transform: translateY(-2px);
+              box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            }
+          `}
+        </style>
+        
+        <div 
+          className="fixed inset-0 z-0"
+          style={{
+            background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+          }}
+        />
+
+        <Sidebar className="border-r-0 glass-effect z-10">
+          <SidebarHeader className="border-b border-white/10 p-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                   style={{background: 'var(--gradient-primary)'}}>
+                <Database className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="font-bold text-gray-900 text-lg gradient-text">DataFlow</h2>
+                <p className="text-xs text-gray-500">AI-Powered Data Portal</p>
+              </div>
+            </div>
+          </SidebarHeader>
+          
+          <SidebarContent className="p-4">
+            <SidebarGroup>
+              <SidebarGroupLabel className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 py-2">
+                Navigation
+              </SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu className="space-y-2">
+                  {navigationItems.map((item) => (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton 
+                        asChild 
+                        className={`hover-lift rounded-xl p-3 transition-all duration-300 ${
+                          location.pathname === item.url 
+                            ? 'bg-white/20 text-gray-900 shadow-lg' 
+                            : 'hover:bg-white/10 hover:text-gray-900'
+                        }`}
+                      >
+                        <Link to={item.url} className="flex items-center gap-3">
+                          <item.icon className="w-5 h-5" />
+                          <div className="flex-1">
+                            <div className="font-semibold">{item.title}</div>
+                            <div className="text-xs text-gray-500">{item.description}</div>
+                          </div>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+
+            <SidebarGroup className="mt-8">
+              <SidebarGroupLabel className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 py-2">
+                Quick Stats
+              </SidebarGroupLabel>
+              <SidebarGroupContent>
+                <div className="px-3 py-4 space-y-4">
+                  <div className="flex items-center gap-3 text-sm">
+                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    <span className="text-gray-600">Datasets Found</span>
+                    <span className="ml-auto font-bold text-gray-900">1.2K+</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-sm">
+                    <Sparkles className="w-4 h-4 text-purple-500" />
+                    <span className="text-gray-600">AI Suggestions</span>
+                    <span className="ml-auto font-bold text-gray-900">Active</span>
+                  </div>
+                </div>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+
+          <SidebarFooter className="border-t border-white/10 p-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                   style={{background: 'var(--gradient-accent)'}}>
+                <span className="text-white font-semibold text-sm">U</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-gray-900 text-sm truncate">Data Scientist</p>
+                <p className="text-xs text-gray-500 truncate">Discover • Analyze • Build</p>
+              </div>
+            </div>
+          </SidebarFooter>
+        </Sidebar>
+
+        <main className="flex-1 flex flex-col relative z-0">
+          <header className="bg-white/80 backdrop-blur-xl border-b border-white/20 px-6 py-4 md:hidden">
+            <div className="flex items-center gap-4">
+              <SidebarTrigger className="hover:bg-white/20 p-2 rounded-lg transition-colors duration-200" />
+              <h1 className="text-xl font-bold gradient-text">DataFlow</h1>
+            </div>
+          </header>
+
+          <div className="flex-1 overflow-auto relative">
+            {children}
+          </div>
+          <Toaster richColors position="top-right" />
+        </main>
+      </div>
+    </SidebarProvider>
+  );
+}
+
+
+make it work like this into my apps current ui
+
+// JavaScript Example: Reading Entities
+// Filterable fields: name, source, identifier, description, category, size_mb, tags, download_count, rating, is_favorited
+async function fetchDatasetEntities() {
+    const response = await fetch(`https://app.base44.com/api/apps/685814457adf233908cebbbe/entities/Dataset`, {
+        headers: {
+            'api_key': 'd36eae14607d4c62b813be04a67da1a4', // or use await User.me() to get the API key
+            'Content-Type': 'application/json'
+        }
+    });
+    const data = await response.json();
+    console.log(data);
+}
+
+// JavaScript Example: Updating an Entity
+// Filterable fields: name, source, identifier, description, category, size_mb, tags, download_count, rating, is_favorited
+async function updateDatasetEntity(entityId, updateData) {
+    const response = await fetch(`https://app.base44.com/api/apps/685814457adf233908cebbbe/entities/Dataset/${entityId}`, {
+        method: 'PUT',
+        headers: {
+            'api_key': 'd36eae14607d4c62b813be04a67da1a4', // or use await User.me() to get the API key
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updateData)
+    });
+    const data = await response.json();
+    console.log(data);
+}
+

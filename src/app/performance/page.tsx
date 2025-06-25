@@ -457,7 +457,11 @@ export default function PerformancePage() {
                       <CardHeader><CardTitle>Model Health Assessment</CardTitle><CardDescription>Analysis of stability and performance for: <strong>{activeJob.parameters.modelName}</strong></CardDescription></CardHeader>
                       <CardContent className="pt-0">
                           <div className="flex items-center justify-between mb-6">
-                              <div className="text-center"><h3 className="text-sm font-medium text-muted-foreground">Status</h3><div className="mt-1 flex items-center gap-2"><Badge className={modelHealth.status === "healthy" ? "bg-green-100 text-green-700 dark:bg-green-700/20 dark:text-green-300 border-green-500/30" : modelHealth.status === "overfitting" ? "bg-amber-100 text-amber-700 dark:bg-amber-700/20 dark:text-amber-300 border-amber-500/30" : "bg-red-100 text-red-700 dark:bg-red-700/20 dark:text-red-300 border-red-500/30"}>{modelHealth.status.replace('_', ' ').toUpperCase()}</Badge></div></div>
+                              <div className="text-center"><h3 className="text-sm font-medium text-muted-foreground">Status</h3><div className="mt-1 flex items-center gap-2"><Badge className={modelHealth.status === "healthy" ? "bg-green-100 text-green-700 dark:bg-green-700/20 dark:text-green-300 border-green-500/30" : modelHealth.status === "overfitting" ? "bg-amber-100 text-amber-700 dark:bg-amber-700/20 dark:text-amber-300 border-amber-500/30" : "bg-red-100 text-red-700 dark:bg-red-700/20 dark:text-red-300 border-red-500/30"}>
+  {typeof modelHealth.status === 'string' && modelHealth.status.length > 0
+    ? modelHealth.status.replace('_', ' ').toUpperCase()
+    : 'UNKNOWN'}
+</Badge></div></div>
                               <div className="text-center"><h3 className="text-sm font-medium text-muted-foreground">Epochs</h3><div className="mt-1 text-2xl font-bold">{getJobMetrics(activeJob.job_id).length > 0 ? Math.max(...getJobMetrics(activeJob.job_id).map(m=>m.epoch)) : activeJob.current_epoch}</div></div>
                               <div className="text-center"><h3 className="text-sm font-medium text-muted-foreground">Last Update</h3><div className="mt-1 text-sm">{activeJob.end_time ? format(new Date(activeJob.end_time), "MMM d, yyyy HH:mm") : (activeJob.start_time ? format(new Date(activeJob.start_time), "MMM d, yyyy HH:mm"):"N/A")}</div></div>
                           </div>

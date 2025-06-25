@@ -195,7 +195,15 @@ export default function RfWaveGeneratorPage() {
           width={600}
           height={220}
           overlays={[
-            { text: `${rfParams.waveform.charAt(0).toUpperCase() + rfParams.waveform.slice(1)} Wave`, color: '#39ff14', x: 120, y: 40, fontSize: 20 },
+            {
+              text: `${typeof rfParams.waveform === 'string' && rfParams.waveform.length > 0
+                ? rfParams.waveform.charAt(0).toUpperCase() + rfParams.waveform.slice(1)
+                : 'Waveform'} Wave`,
+              color: '#39ff14',
+              x: 120,
+              y: 40,
+              fontSize: 20
+            },
           ]}
           showLegend
         />

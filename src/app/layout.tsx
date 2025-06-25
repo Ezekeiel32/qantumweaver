@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import AppLayout from "@/components/layout/AppLayout"; // Import the main layout
 import { ClientBackground } from "./ClientBackground";
 import ClientProviders from './ClientProviders';
+import Link from "next/link";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -34,6 +35,8 @@ export default function RootLayout({
       <body className="font-body antialiased retro-scanlines">
         <ClientProviders>
         <AppLayout>
+          {/* Add this to your sidebar or main nav */}
+          <Link href="/data-portal" className="block px-4 py-2 hover:bg-gray-100 rounded">Data Portal</Link>
           {children}
         </AppLayout>
         </ClientProviders>

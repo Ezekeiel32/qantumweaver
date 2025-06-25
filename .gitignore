@@ -83,3 +83,34 @@ models/
 # Ignore environment files
 .env
 .env.*
+
+# Ignore model weights
+training_jobs/*.pth
+
+# Ignore logs and history
+logs/
+history/
+*.log
+
+# Ignore datasets and raw data
+datasets/
+data_api/MNIST/raw/
+data/
+*.csv
+*.tsv
+
+# Ignore virtual environments
+venv/
+.env/
+__pycache__/
+*.pyc
+
+# Ignore OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Ignore backup files
+*~
+*.bak

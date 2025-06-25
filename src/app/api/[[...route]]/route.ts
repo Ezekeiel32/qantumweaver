@@ -113,6 +113,26 @@ export async function POST(req: NextRequest) {
 // Status endpoint handler
 export async function GET(req: NextRequest) {
   try {
+    // --- DATASET SEARCH HANDLER ---
+    if (req.nextUrl.pathname === '/api/datasets') {
+      // Static dataset list for now
+      const datasets = [
+        { id: 1, name: "MNIST", description: "Handwritten digits", tags: ["vision", "digits"], category: "vision", size_mb: 20, rating: 5, is_favorited: false },
+        { id: 2, name: "IMDB Reviews", description: "Movie reviews for sentiment analysis", tags: ["nlp", "text"], category: "nlp", size_mb: 80, rating: 4, is_favorited: false },
+        { id: 3, name: "Titanic", description: "Passenger data for survival prediction", tags: ["tabular", "csv"], category: "tabular", size_mb: 1, rating: 4, is_favorited: false },
+      ];
+      const search = req.nextUrl.searchParams.get('search')?.toLowerCase() || '';
+      const filtered = search
+        ? datasets.filter(ds =>
+            ds.name.toLowerCase().includes(search) ||
+            ds.description?.toLowerCase().includes(search) ||
+            ds.tags?.some((tag: string) => tag.toLowerCase().includes(search))
+          )
+        : datasets;
+      return NextResponse.json(filtered);
+    }
+    // --- END DATASET SEARCH HANDLER ---
+
     // Check if this is an active-job request
     if (req.url.endsWith('/api/active-job')) {
       const activeJobId = findMostRecentActiveJob();

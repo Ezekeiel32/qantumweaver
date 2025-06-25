@@ -76,7 +76,7 @@ export const ChartPanel: React.FC<{
   const currentLoss = latestMetrics?.loss?.toFixed(4) || 0;
 
   // Status display text
-  const statusText = jobStatus?.toUpperCase() || 'IDLE';
+  const statusText = typeof jobStatus === 'string' && jobStatus.length > 0 ? jobStatus.toUpperCase() : 'IDLE';
   const isRunning = jobStatus === 'running';
 
   return (

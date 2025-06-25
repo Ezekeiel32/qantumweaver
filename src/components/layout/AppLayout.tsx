@@ -32,6 +32,7 @@ import { AdvisorProvider } from "@/components/mini-hs-qnn-advisor";
 const mainNavItems = [
   { href: "/introduction", label: "Introduction", icon: ArrowRight },
   { href: "/dashboard", label: "Dashboard", icon: Home },
+  { href: "/data-portal", label: "Data Portal", icon: Globe },
   { href: "/train", label: "Train Model", icon: PlayCircle },
   { href: "/my-zpe-ai-models", label: "My ZPE-AI Models", icon: ListChecks },
   { href: "/performance", label: "Performance Analysis", icon: TrendingUp },

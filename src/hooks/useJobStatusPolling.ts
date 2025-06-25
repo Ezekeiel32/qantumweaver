@@ -47,16 +47,18 @@ export function useJobStatusPolling() {
         throw new Error(`HTTP error! status: ${res.status}`);
       }
 
-      const data = await res.json();
-      if (!data.job_id) {
-        throw new Error('No job ID returned');
+      // Instead of trusting returned job_id, always fetch the latest active job from backend
+      await new Promise(resolve => setTimeout(resolve, 300)); // slight delay to let backend register job
+      const activeRes = await fetch('/api/active-job');
+      const activeData = await activeRes.json();
+      if (!activeData.job_id) {
+        throw new Error('No active job found after starting');
       }
-
-      setJobId(data.job_id);
+      setJobId(activeData.job_id);
       setIsPolling(true);
       toast({
         title: "Training Started",
-        description: `Job ID: ${data.job_id}`,
+        description: `Job ID: ${activeData.job_id}`,
       });
     } catch (error) {
       console.error('Failed to start job:', error);

@@ -823,3 +823,8 @@ button:hover, .neon-btn:hover {
 .minimal-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--neon-yellow, #ffe066);
 }
+
+.blue-coated-card .glass-effect {
+  border-color: rgba(59, 130, 246, 0.7); /* blue-500 with opacity */
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+}
