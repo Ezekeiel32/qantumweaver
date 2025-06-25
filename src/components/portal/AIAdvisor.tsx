@@ -1144,13 +1144,12 @@ Generate the complete, production-ready script.`,
   };
 
   return (
-    <>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       <CodeModal 
         isOpen={isCodeModalOpen} 
         onClose={() => setIsCodeModalOpen(false)} 
         code={zpeTrainingCode} 
       />
-      
       <style>{`
         .neon-glow {
           box-shadow: 0 0 32px #00ffe7, 0 0 8px #a259ff;
@@ -1301,7 +1300,6 @@ Generate the complete, production-ready script.`,
             )}
           </div>
         </div>
-      </Card>
-    </>
-  );
+      </div>
+    );
 }
