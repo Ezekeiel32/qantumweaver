@@ -11,7 +11,7 @@ services:
     runtime: node
     buildCommand: npm --prefix . install && npm --prefix . run build
     startCommand: npm --prefix . start
-    rootDir: .
+    rootDir: src
     plan: free
     envVars:
       - key: NEXT_PUBLIC_API_URL
