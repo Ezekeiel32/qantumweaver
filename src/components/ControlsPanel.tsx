@@ -75,7 +75,7 @@ const ControlsPanel: React.FC<ControlsPanelProps> = ({ startJob, stopJob, isJobA
             </div>
 
             <Dialog open={showConfig} onOpenChange={setShowConfig}>
-                <DialogContent className="panel-3d-flat min-w-[600px] max-w-[90vw] max-h-[90vh] flex flex-col">
+                <DialogContent className="panel-3d-flat min-w-[600px] max-w-[90vw] max-h-[90vh] flex flex-col items-center justify-center">
                     <DialogHeader>
                         <DialogTitle className="panel-title text-2xl">Train Configuration</DialogTitle>
                         <DialogDescription>Adjust parameters for the ZPEDeepNet model.</DialogDescription>
