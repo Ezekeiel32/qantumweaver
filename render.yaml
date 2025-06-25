@@ -5,14 +5,14 @@ services:
     buildCommand: ""
     startCommand: gunicorn -k uvicorn.workers.UvicornWorker app:app
     rootDir: .
-    plan: starter
+    plan: free
   - type: web
     name: tetrazpe-frontend
     runtime: node
     buildCommand: npm install && npm run build
     startCommand: npm start
     rootDir: .
-    plan: starter
+    plan: free
     envVars:
       - key: NEXT_PUBLIC_API_URL
         value: https://tetrazpe-backend.onrender.com 
